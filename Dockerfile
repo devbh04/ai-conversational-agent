@@ -43,6 +43,7 @@ COPY --from=builder /app/.venv /app/.venv
 
 # Copy project files
 COPY pyproject.toml .
+COPY agents/ ./agents/
 COPY . .
 
 # Copy supervisor config
@@ -53,8 +54,8 @@ ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV VIRTUAL_ENV=/app/.venv
 
-# Expose UI port, backend port, and LiveKit agent port
-EXPOSE 8000 8001 8081
+# HF Spaces uses port 7860
+EXPOSE 7860
 
 # Start all services via supervisord
 CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]

@@ -175,7 +175,84 @@ def notify_agent_error(caller_phone: str, error: str) -> bool:
         f"📞 *Phone:*  `{caller_phone}`\n"
         f"🔴 *Error:*  `{error}`\n"
         f"━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"_RapidX AI Voice Agent_ 🤖"
+        f"_Voice Agent_"
+    )
+    return send_telegram(message)
+
+
+# ─── Doctor Appointment Notifications ─────────────────────────────────────────
+
+def send_whatsapp_appointment_confirmation(
+    caller_phone: str,
+    caller_name: str,
+    appointment_time: str,
+) -> bool:
+    """Send WhatsApp confirmation to patient after dental appointment is booked."""
+    try:
+        dt = datetime.fromisoformat(appointment_time)
+        readable = dt.strftime("%A, %d %B %Y at %I:%M %p")
+    except Exception:
+        readable = appointment_time
+
+    message = (
+        f"✅ Hi {caller_name or 'there'}! Your dental appointment with Dr. Nehra is *confirmed*.\n\n"
+        f"📅 *Date & Time:* {readable}\n\n"
+        f"📍 Please arrive 10 minutes early.\n"
+        f"If you need to reschedule, just call us back.\n\n"
+        f"— Arjun (Dr. Nehra's Clinic) 🦷"
+    )
+    return send_whatsapp(caller_phone, message)
+
+
+def notify_appointment_confirmed(
+    caller_name: str,
+    caller_phone: str,
+    appointment_time: str,
+    dental_concern: str = "",
+    booking_id: str = "",
+    notes: str = "",
+) -> bool:
+    """Telegram + WhatsApp notification when a dental appointment is confirmed."""
+    try:
+        dt = datetime.fromisoformat(appointment_time)
+        readable = dt.strftime("%A, %d %B %Y at %-I:%M %p")
+    except Exception:
+        readable = appointment_time
+
+    message = (
+        f"🦷 *New Dental Appointment!*\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"👤 *Patient:*    {caller_name}\n"
+        f"📞 *Phone:*      `{caller_phone}`\n"
+        f"📅 *Time:*       {readable}\n"
+        f"🔖 *Booking ID:* `{booking_id or '—'}`\n"
+        f"🦷 *Concern:*    {dental_concern or '—'}\n"
+        f"📝 *Notes:*      {notes or '—'}\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"_Dr. Nehra AI Receptionist_"
+    )
+    tg_ok = send_telegram(message)
+    send_whatsapp_appointment_confirmation(caller_phone, caller_name, appointment_time)
+    return tg_ok
+
+
+def notify_doctor_call_no_booking(
+    caller_name: str,
+    caller_phone: str,
+    call_summary: str = "",
+    duration_seconds: int = 0,
+) -> bool:
+    """Telegram notification when a doctor call ends without booking."""
+    message = (
+        f"📵 *Doctor Call — No Appointment*\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"👤 *Name:*      {caller_name or 'Unknown'}\n"
+        f"📞 *Phone:*     `{caller_phone}`\n"
+        f"⏱️ *Duration:*  {duration_seconds}s\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"💬 *Summary:*\n_{call_summary or 'Patient did not book.'}_\n\n"
+        f"_Consider a follow-up call_ 📲\n"
+        f"_Dr. Nehra AI Receptionist_"
     )
     return send_telegram(message)
 
