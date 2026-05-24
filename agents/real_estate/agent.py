@@ -435,6 +435,14 @@ async def entrypoint(ctx: JobContext):
             max_completion_tokens=120,
         )
         logger.info(f"[LLM] Using Claude via Anthropic: {llm_model}")
+    elif llm_provider == "azure":
+        agent_llm = openai.LLM.with_azure(
+            model=os.getenv("AZURE_OPENAI_DEPLOYMENT", llm_model or "gpt-4o-mini"),
+            azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT", ""),
+            api_key=os.getenv("AZURE_OPENAI_API_KEY", ""),
+            api_version=os.getenv("AZURE_OPENAI_API_VERSION", "2024-10-21"),
+        )
+        logger.info(f"[LLM] Using Azure OpenAI: {llm_model}")
     else:
         agent_llm = openai.LLM(model=llm_model, max_completion_tokens=120)  # cap tokens (#7)
         logger.info(f"[LLM] Using OpenAI: {llm_model}")
@@ -688,4 +696,5 @@ if __name__ == "__main__":
     cli.run_app(WorkerOptions(
         entrypoint_fnc=entrypoint,
         agent_name="real-estate-agent",
+        port=8083,
     ))
