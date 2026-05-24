@@ -498,6 +498,179 @@ def _sse_event(step: str, status: str, message: str) -> str:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# WEB CHAT — Single-user lock + SSE availability
+# ══════════════════════════════════════════════════════════════════════════════
+
+_web_chat_lock = {"active": False, "room_name": None, "started_at": None}
+_sse_clients: list[asyncio.Queue] = []
+
+
+def _broadcast_status(status: str):
+    msg = {"status": status}
+    for q in _sse_clients:
+        try:
+            q.put_nowait(msg)
+        except Exception:
+            pass
+
+
+async def _auto_release_lock(room_name: str, timeout: int = 180):
+    """Safety net: auto-release lock after timeout seconds."""
+    await asyncio.sleep(timeout)
+    if _web_chat_lock["active"] and _web_chat_lock["room_name"] == room_name:
+        logger.info(f"[WEB-CHAT] Auto-releasing lock for {room_name}")
+        _web_chat_lock["active"] = False
+        _web_chat_lock["room_name"] = None
+        _broadcast_status("available")
+
+
+@app.get("/api/web-chat/status")
+async def web_chat_status():
+    """SSE stream — real-time web chat availability."""
+    async def stream():
+        queue: asyncio.Queue = asyncio.Queue()
+        _sse_clients.append(queue)
+        try:
+            status = "busy" if _web_chat_lock["active"] else "available"
+            yield f"data: {json.dumps({'status': status})}\n\n"
+            while True:
+                try:
+                    msg = await asyncio.wait_for(queue.get(), timeout=15)
+                    yield f"data: {json.dumps(msg)}\n\n"
+                except asyncio.TimeoutError:
+                    yield f"data: {json.dumps({'status': 'heartbeat'})}\n\n"
+        finally:
+            _sse_clients.remove(queue)
+
+    return StreamingResponse(stream(), media_type="text/event-stream")
+
+
+@app.post("/api/web-chat/start")
+async def start_web_chat(request: Request):
+    """Create LiveKit room, generate browser token, dispatch agent."""
+    if _web_chat_lock["active"]:
+        return JSONResponse(status_code=409, content={
+            "error": "busy",
+            "message": "Agent is in another conversation. Please wait.",
+        })
+
+    data = await request.json()
+    agent_type = data.get("agent_type", "")
+    if not agent_type:
+        return JSONResponse(status_code=400, content={"error": "agent_type required"})
+
+    url = os.getenv("LIVEKIT_URL", "")
+    api_key = os.getenv("LIVEKIT_API_KEY", "")
+    api_secret = os.getenv("LIVEKIT_API_SECRET", "")
+
+    if not (url and api_key and api_secret):
+        return JSONResponse(status_code=500, content={"error": "LiveKit credentials not configured"})
+
+    room_name = f"web-{agent_type}-{random.randint(10000, 99999)}"
+
+    try:
+        from livekit import api as lk_api
+
+        # Generate browser participant token
+        token = (
+            lk_api.AccessToken(api_key, api_secret)
+            .with_identity("web-user")
+            .with_name("Web Visitor")
+            .with_grants(lk_api.VideoGrants(
+                room_join=True,
+                room=room_name,
+                can_publish=True,
+                can_subscribe=True,
+            ))
+            .to_jwt()
+        )
+
+        # Dispatch agent to room
+        lk = lk_api.LiveKitAPI(url=url, api_key=api_key, api_secret=api_secret)
+        await lk.agent_dispatch.create_dispatch(
+            lk_api.CreateAgentDispatchRequest(
+                agent_name=agent_type,
+                room=room_name,
+                metadata=json.dumps({"phone_number": "web-user", "channel": "web"}),
+            )
+        )
+        await lk.aclose()
+
+        # Acquire lock
+        _web_chat_lock["active"] = True
+        _web_chat_lock["room_name"] = room_name
+        _web_chat_lock["started_at"] = datetime.utcnow().isoformat()
+        _broadcast_status("busy")
+
+        # Auto-release after 3 min safety net
+        asyncio.create_task(_auto_release_lock(room_name, timeout=180))
+
+        logger.info(f"[WEB-CHAT] Started: {agent_type} in {room_name}")
+        return {"token": token, "room_name": room_name, "livekit_url": url}
+
+    except Exception as e:
+        logger.error(f"[WEB-CHAT] Failed: {e}")
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.post("/api/web-chat/end")
+async def end_web_chat(request: Request):
+    """Release lock and return post-chat summary."""
+    data = await request.json()
+    room_name = data.get("room_name", "")
+
+    if _web_chat_lock["room_name"] == room_name:
+        _web_chat_lock["active"] = False
+        _web_chat_lock["room_name"] = None
+        _broadcast_status("available")
+        logger.info(f"[WEB-CHAT] Ended: {room_name}")
+
+    return {
+        "summary": "Chat completed",
+        "call_benefits": [
+            "📱 WhatsApp confirmation with booking details",
+            "🔔 Follow-up reminders",
+            "👤 Direct connection to our team",
+            "⚡ Priority scheduling and support",
+        ],
+        "contact_url": "https://devbhangale.vercel.app",
+    }
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ADMIN DATA ENDPOINTS
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+@app.get("/api/admin/stats")
+async def admin_stats():
+    """Aggregated stats for both agents."""
+    re_logs = db.fetch_call_logs("real_estate_calls", limit=500)
+    doc_logs = db.fetch_call_logs("doctor_calls", limit=500)
+
+    def calc(logs: list) -> dict:
+        total = len(logs)
+        booked = sum(1 for r in logs if r.get("was_booked"))
+        durations = [r["duration_seconds"] for r in logs if r.get("duration_seconds")]
+        avg_dur = round(sum(durations) / len(durations)) if durations else 0
+        rate = round((booked / total) * 100) if total else 0
+        return {"total": total, "booked": booked, "avg_duration": avg_dur, "booking_rate": rate}
+
+    return {
+        "real_estate": calc(re_logs),
+        "doctor": calc(doc_logs),
+        "combined": calc(re_logs + doc_logs),
+    }
+
+
+@app.get("/api/admin/calls")
+async def admin_calls(agent: str = "real_estate", limit: int = 50):
+    """Fetch call logs for a specific agent."""
+    table = "real_estate_calls" if agent == "real_estate" else "doctor_calls"
+    return db.fetch_call_logs(table, limit=limit)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # HEALTH
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -508,6 +681,7 @@ def health():
         "status": "ok",
         "service": "voice-agent-backend",
         "agents": ["real-estate-agent", "doctor-nehra"],
+        "web_chat_active": _web_chat_lock["active"],
         "timestamp": datetime.utcnow().isoformat(),
     }
 
@@ -518,4 +692,5 @@ def health():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", "8001")))
+    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", "7860")))
+
