@@ -57,5 +57,6 @@ ENV VIRTUAL_ENV=/app/.venv
 # HF Spaces uses port 7860
 EXPOSE 7860
 
-# Start all services via supervisord
-CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]
+# At runtime: if GCP_CREDENTIALS_JSON secret exists, write it to /app/gcp.json
+# then start supervisord. The JSON file is ephemeral (not in git or image layers).
+CMD ["sh", "-c", "if [ -n \"$GCP_CREDENTIALS_JSON\" ]; then python -c \"import os; open('/app/gcp.json', 'w').write(os.environ['GCP_CREDENTIALS_JSON'])\" && export GOOGLE_APPLICATION_CREDENTIALS=/app/gcp.json; fi && exec /usr/bin/supervisord -c /etc/supervisor/conf.d/supervisord.conf"]

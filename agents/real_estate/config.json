@@ -22,5 +22,6 @@
     "sip_trunk_id": "",
     "supabase_url": "https://yplraarslqarwuedzlfr.supabase.co",
     "supabase_key": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlwbHJhYXJzbHFhcnd1ZWR6bGZyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzEyNjQwNjMsImV4cCI6MjA4Njg0MDA2M30.YDQsu_sc_QF4v6wpe8uW8u-OlvMludrnAqBdN8AMHoI",
-    "first_line": "Haan ji, namaskar! Aap kaunsi property dhundh rahe hain \u2014 buy karna hai ya rent?"
+    "first_line": "Haan ji, namaskar! Aap kaunsi property dhundh rahe hain \u2014 buy karna hai ya rent?",
+    "gemini_voice": "Puck"
 }
