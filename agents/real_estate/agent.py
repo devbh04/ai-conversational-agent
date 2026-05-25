@@ -283,15 +283,9 @@ class OutboundAssistant(Agent):
 
     def __init__(self, agent_tools: AgentTools, first_line: str = "",
                  live_config: dict | None = None, is_gemini_mode: bool = False):
-        # In Gemini mode, only keep SIP tools (transfer/end call)
-        # Booking tools cause 1008 crashes — booking is handled post-call
-        if is_gemini_mode:
-            tools = [
-                t for t in llm.find_function_tools(agent_tools)
-                if t.name in ("transfer_call", "end_call")
-            ]
-        else:
-            tools = llm.find_function_tools(agent_tools)
+        # Register all tools — if Gemini 1008 crashes tool calls,
+        # the post-call Azure fallback in backend handles booking
+        tools = llm.find_function_tools(agent_tools)
 
         self._first_line  = first_line
         self._live_config = live_config or {}
