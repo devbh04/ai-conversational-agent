@@ -632,9 +632,7 @@ async def entrypoint(ctx: JobContext):
             voice=gemini_voice,
             temperature=0.8,
             instructions=agent.instructions,
-            vertexai=True,
-            project=os.getenv("GOOGLE_CLOUD_PROJECT"),
-            location=os.getenv("GOOGLE_CLOUD_LOCATION", "global"),
+            api_key=os.getenv("GOOGLE_API_KEY"),
             # Enable thinking for better reasoning (adds latency):
             # thinking_config=google.ThinkingConfig(enabled=True),
         )
