@@ -339,7 +339,8 @@ async def _process_call_completed(data: dict):
                     "}\n\n"
                     "RULES:\n"
                     "- Only set site_visit if the caller CONFIRMED a visit.\n"
-                    f"- The caller's phone number is: {phone}\n\n"
+                    f"- The caller's phone number is: {phone}\n"
+                    f"- Today's date is: {datetime.now(pytz.timezone('Asia/Kolkata')).strftime('%Y-%m-%d')}\n\n"
                     f"TRANSCRIPT:\n{transcript[:2000]}"
                 )
 
