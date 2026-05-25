@@ -262,13 +262,13 @@ async def internal_call_completed(request: Request, background_tasks: Background
 
 
 async def _process_call_completed(data: dict):
-    """Post-call pipeline: sentiment → cost → notifications → DB save."""
+    """Post-call pipeline: Azure LLM transcript analysis → booking → notifications → DB save."""
     phone = data.get("phone", "unknown")
     caller_name = data.get("caller_name", "")
     duration = data.get("duration", 0)
     transcript = data.get("transcript", "")
     agent_type = data.get("agent_type", "real_estate")
-    booking_intent = data.get("booking_intent")
+    booking_intent = data.get("booking_intent")  # may come from normal mode
     interrupt_count = data.get("interrupt_count", 0)
     tts_voice = data.get("tts_voice", "")
 
@@ -276,24 +276,175 @@ async def _process_call_completed(data: dict):
     property_preferences = data.get("property_preferences", "")
     dental_concern = data.get("dental_concern", "")
 
-    # ── Sentiment analysis ────────────────────────────────────────────────
+    # ── Azure GPT-4o-mini: Extract booking + sentiment from transcript ────
     sentiment = "unknown"
-    if transcript and transcript != "unavailable":
+    extracted_booking = None
+    extracted_summary = ""
+
+    if transcript and transcript != "unavailable" and not booking_intent:
         try:
             import openai as _oai
-            _client = _oai.AsyncOpenAI(api_key=os.environ.get("OPENAI_API_KEY", ""))
+
+            _azure_endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT", "")
+            _azure_key = os.environ.get("AZURE_OPENAI_API_KEY", "")
+            _azure_deployment = os.environ.get("AZURE_OPENAI_DEPLOYMENT", "gpt-4o-mini")
+            _azure_version = os.environ.get("AZURE_OPENAI_API_VERSION", "2024-10-01-preview")
+
+            if _azure_endpoint and _azure_key:
+                _client = _oai.AsyncAzureOpenAI(
+                    azure_endpoint=_azure_endpoint,
+                    api_key=_azure_key,
+                    api_version=_azure_version,
+                )
+                model_name = _azure_deployment
+            else:
+                # Fallback to regular OpenAI if Azure not configured
+                _client = _oai.AsyncOpenAI(api_key=os.environ.get("OPENAI_API_KEY", ""))
+                model_name = "gpt-4o-mini"
+
+            if agent_type == "doctor":
+                extraction_prompt = (
+                    "Analyze this dental clinic call transcript. Return ONLY valid JSON:\n"
+                    "{\n"
+                    '  "sentiment": "positive" | "neutral" | "negative" | "frustrated",\n'
+                    '  "summary": "one-line summary of the call",\n'
+                    '  "booking": null or {\n'
+                    '    "patient_name": "...",\n'
+                    '    "phone": "...",\n'
+                    '    "start_time": "ISO 8601 datetime with +05:30 timezone e.g. 2026-05-26T09:00:00+05:30",\n'
+                    '    "dental_concern": "...",\n'
+                    '    "notes": "any extra notes"\n'
+                    "  }\n"
+                    "}\n\n"
+                    "RULES:\n"
+                    "- Only set booking if the patient CONFIRMED an appointment (said yes to a specific time).\n"
+                    "- If they just asked about availability but didn't confirm, set booking to null.\n"
+                    f"- The caller's phone number is: {phone}\n"
+                    f"- Today's date is: {datetime.now(pytz.timezone('Asia/Kolkata')).strftime('%Y-%m-%d')}\n\n"
+                    f"TRANSCRIPT:\n{transcript[:2000]}"
+                )
+            else:
+                extraction_prompt = (
+                    "Analyze this real estate call transcript. Return ONLY valid JSON:\n"
+                    "{\n"
+                    '  "sentiment": "positive" | "neutral" | "negative" | "frustrated",\n'
+                    '  "summary": "one-line summary of the call",\n'
+                    '  "site_visit": null or {\n'
+                    '    "visitor_name": "...",\n'
+                    '    "phone": "...",\n'
+                    '    "visit_time": "ISO 8601 datetime with +05:30 timezone",\n'
+                    '    "property_preferences": "...",\n'
+                    '    "notes": "any extra notes"\n'
+                    "  }\n"
+                    "}\n\n"
+                    "RULES:\n"
+                    "- Only set site_visit if the caller CONFIRMED a visit.\n"
+                    f"- The caller's phone number is: {phone}\n\n"
+                    f"TRANSCRIPT:\n{transcript[:2000]}"
+                )
+
             resp = await _client.chat.completions.create(
-                model="gpt-4o-mini",
-                max_tokens=5,
-                messages=[{
-                    "role": "user",
-                    "content": f"Classify this call as one word: positive, neutral, negative, or frustrated.\n\n{transcript[:800]}",
-                }],
+                model=model_name,
+                max_tokens=300,
+                temperature=0,
+                response_format={"type": "json_object"},
+                messages=[{"role": "user", "content": extraction_prompt}],
+            )
+
+            raw_json = resp.choices[0].message.content.strip()
+            logger.info(f"[POST-CALL] Azure LLM extraction: {raw_json[:500]}")
+
+            extracted = json.loads(raw_json)
+            sentiment = extracted.get("sentiment", "unknown")
+            extracted_summary = extracted.get("summary", "")
+
+            if agent_type == "doctor" and extracted.get("booking"):
+                extracted_booking = extracted["booking"]
+                caller_name = extracted_booking.get("patient_name", caller_name)
+                dental_concern = extracted_booking.get("dental_concern", dental_concern)
+                logger.info(f"[POST-CALL] Booking extracted: {extracted_booking}")
+            elif agent_type != "doctor" and extracted.get("site_visit"):
+                extracted_booking = extracted["site_visit"]
+                caller_name = extracted_booking.get("visitor_name", caller_name)
+                property_preferences = extracted_booking.get("property_preferences", property_preferences)
+                logger.info(f"[POST-CALL] Site visit extracted: {extracted_booking}")
+
+        except json.JSONDecodeError as e:
+            logger.warning(f"[POST-CALL] JSON parse failed: {e}")
+        except Exception as e:
+            logger.warning(f"[POST-CALL] Azure extraction failed: {e}")
+
+    elif transcript and transcript != "unavailable" and booking_intent:
+        # Normal mode — booking already done by tools, just do sentiment
+        try:
+            import openai as _oai
+            _azure_endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT", "")
+            _azure_key = os.environ.get("AZURE_OPENAI_API_KEY", "")
+            if _azure_endpoint and _azure_key:
+                _client = _oai.AsyncAzureOpenAI(
+                    azure_endpoint=_azure_endpoint,
+                    api_key=_azure_key,
+                    api_version=os.environ.get("AZURE_OPENAI_API_VERSION", "2024-10-01-preview"),
+                )
+                model_name = os.environ.get("AZURE_OPENAI_DEPLOYMENT", "gpt-4o-mini")
+            else:
+                _client = _oai.AsyncOpenAI(api_key=os.environ.get("OPENAI_API_KEY", ""))
+                model_name = "gpt-4o-mini"
+            resp = await _client.chat.completions.create(
+                model=model_name, max_tokens=5,
+                messages=[{"role": "user", "content": f"Classify this call as one word: positive, neutral, negative, or frustrated.\n\n{transcript[:800]}"}],
             )
             sentiment = resp.choices[0].message.content.strip().lower()
-            logger.info(f"[SENTIMENT] {sentiment}")
         except Exception as e:
             logger.warning(f"[SENTIMENT] Failed: {e}")
+
+    # ── Execute Cal.com booking if extracted from transcript ───────────────
+    if extracted_booking and not booking_intent:
+        if agent_type == "doctor":
+            start_time = extracted_booking.get("start_time", "")
+            if start_time:
+                logger.info(f"[POST-CALL] Booking via Cal.com: {caller_name} at {start_time}")
+                # Use doctor Cal.com creds
+                _orig_key = os.environ.get("CAL_API_KEY", "")
+                _orig_eid = os.environ.get("CAL_EVENT_TYPE_ID", "")
+                os.environ["CAL_API_KEY"] = os.environ.get("DOC_CAL_API_KEY", _orig_key)
+                os.environ["CAL_EVENT_TYPE_ID"] = os.environ.get("DOC_CAL_EVENT_TYPE_ID", _orig_eid)
+                try:
+                    result = await calendar_tools.async_create_booking(
+                        start_time=start_time,
+                        caller_name=caller_name,
+                        caller_phone=phone,
+                        notes=f"Dental concern: {dental_concern}. {extracted_booking.get('notes', '')}",
+                    )
+                    if result.get("success"):
+                        booking_intent = {
+                            "start_time": start_time,
+                            "caller_name": caller_name,
+                            "caller_phone": phone,
+                            "booking_id": result.get("booking_id", ""),
+                        }
+                        logger.info(f"[POST-CALL] ✅ Cal.com booking confirmed: {result.get('booking_id')}")
+                        # Send WhatsApp confirmation
+                        notify.notify_appointment_confirmed(
+                            caller_name=caller_name, caller_phone=phone,
+                            appointment_time=start_time,
+                            dental_concern=dental_concern,
+                            booking_id=result.get("booking_id", ""),
+                            tts_voice=tts_voice,
+                        )
+                    else:
+                        logger.error(f"[POST-CALL] ❌ Cal.com booking failed: {result.get('message')}")
+                        # Notify about failed booking
+                        notify.notify_doctor_call_no_booking(
+                            caller_name=caller_name, caller_phone=phone,
+                            call_summary=f"Booking attempted but failed: {result.get('message')}. Time: {start_time}",
+                            duration_seconds=duration,
+                        )
+                finally:
+                    os.environ["CAL_API_KEY"] = _orig_key
+                    os.environ["CAL_EVENT_TYPE_ID"] = _orig_eid
+            else:
+                logger.warning("[POST-CALL] Booking extracted but no start_time found")
 
     # ── Cost estimation ───────────────────────────────────────────────────
     def estimate_cost(dur: int, chars: int) -> float:
@@ -315,13 +466,13 @@ async def _process_call_completed(data: dict):
         if agent_type == "doctor":
             notify.notify_doctor_call_no_booking(
                 caller_name=caller_name, caller_phone=phone,
-                call_summary="Patient did not book during this call.",
+                call_summary=extracted_summary or "Patient did not book during this call.",
                 duration_seconds=duration,
             )
         else:
             notify.notify_call_no_booking(
                 caller_name=caller_name, caller_phone=phone,
-                call_summary="Caller did not schedule during this call.",
+                call_summary=extracted_summary or "Caller did not schedule during this call.",
                 tts_voice=tts_voice, duration_seconds=duration,
             )
 
@@ -344,7 +495,7 @@ async def _process_call_completed(data: dict):
     if agent_type == "doctor":
         db.save_doctor_call(
             phone=phone, duration=duration, transcript=transcript,
-            summary=f"Booking: {booking_intent}" if was_booked else "No appointment",
+            summary=extracted_summary or (f"Booking: {booking_intent}" if was_booked else "No appointment"),
             caller_name=caller_name, sentiment=sentiment,
             estimated_cost_usd=estimated_cost,
             call_date=call_dt.date().isoformat(),
@@ -358,7 +509,7 @@ async def _process_call_completed(data: dict):
     else:
         db.save_real_estate_call(
             phone=phone, duration=duration, transcript=transcript,
-            summary=f"Site visit: {booking_intent}" if was_booked else "No booking",
+            summary=extracted_summary or (f"Site visit: {booking_intent}" if was_booked else "No booking"),
             caller_name=caller_name, sentiment=sentiment,
             estimated_cost_usd=estimated_cost,
             call_date=call_dt.date().isoformat(),

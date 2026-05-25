@@ -305,7 +305,16 @@ class DoctorAssistant(Agent):
     def __init__(self, agent_tools: DoctorTools, first_line: str = "",
                  live_config: dict | None = None, slot_context: str = "",
                  is_gemini_mode: bool = False):
-        tools = llm.find_function_tools(agent_tools)
+        # In Gemini mode, only keep SIP tools (transfer/end call)
+        # Booking tools cause 1008 crashes — booking is handled post-call
+        if is_gemini_mode:
+            tools = [
+                t for t in llm.find_function_tools(agent_tools)
+                if t.name in ("transfer_call", "end_call")
+            ]
+        else:
+            tools = llm.find_function_tools(agent_tools)
+
         self._first_line  = first_line
         self._live_config = live_config or {}
         self._is_gemini_mode = is_gemini_mode
@@ -319,14 +328,22 @@ class DoctorAssistant(Agent):
         if slot_context:
             final_instructions += slot_context
 
-        # In gemini native audio mode, bake the greeting into instructions
-        # because generate_reply is not supported
+        # In gemini mode, add post-call booking instructions
         if is_gemini_mode:
             greeting = live_config_loaded.get(
                 "first_line",
                 first_line or "Namaskar! Main Arjun, Dr. Nehra ke clinic se bol raha hoon. Kya aapko appointment book karni hai?"
             )
             final_instructions = f"Start the conversation by saying exactly: '{greeting}'\n\n" + final_instructions
+            final_instructions += (
+                "\n\n[IMPORTANT — BOOKING FLOW]\n"
+                "You CANNOT book appointments directly. Instead:\n"
+                "1. Suggest available slots from the times listed above.\n"
+                "2. Collect: patient name, preferred time, and dental concern.\n"
+                "3. Repeat back to confirm: 'So I'm noting your appointment for [name] at [time] for [concern]. Is that correct?'\n"
+                "4. Once confirmed, say: 'Your appointment is noted! You will receive a WhatsApp confirmation shortly.'\n"
+                "5. The booking will be processed automatically after the call.\n"
+            )
 
         # Token counter (#11)
         token_count = count_tokens(final_instructions)

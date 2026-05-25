@@ -283,7 +283,16 @@ class OutboundAssistant(Agent):
 
     def __init__(self, agent_tools: AgentTools, first_line: str = "",
                  live_config: dict | None = None, is_gemini_mode: bool = False):
-        tools = llm.find_function_tools(agent_tools)
+        # In Gemini mode, only keep SIP tools (transfer/end call)
+        # Booking tools cause 1008 crashes — booking is handled post-call
+        if is_gemini_mode:
+            tools = [
+                t for t in llm.find_function_tools(agent_tools)
+                if t.name in ("transfer_call", "end_call")
+            ]
+        else:
+            tools = llm.find_function_tools(agent_tools)
+
         self._first_line  = first_line
         self._live_config = live_config or {}
         self._is_gemini_mode = is_gemini_mode
@@ -295,13 +304,21 @@ class OutboundAssistant(Agent):
         lang_instruction  = get_language_instruction(lang_preset)
         final_instructions = base_instructions + ist_context + lang_instruction
 
-        # In gemini native audio mode, bake the greeting into instructions
+        # In gemini mode, add post-call site visit instructions
         if is_gemini_mode:
             greeting = live_config_loaded.get(
                 "first_line",
                 first_line or "Haan ji, namaskar! Aap kaunsi property dhundh rahe hain — buy karna hai ya rent?"
             )
             final_instructions = f"Start the conversation by saying exactly: '{greeting}'\n\n" + final_instructions
+            final_instructions += (
+                "\n\n[IMPORTANT — SITE VISIT FLOW]\n"
+                "You CANNOT schedule site visits directly. Instead:\n"
+                "1. Collect: visitor name, preferred date/time, property preferences, and budget.\n"
+                "2. Repeat back to confirm the details.\n"
+                "3. Once confirmed, say: 'Your site visit is noted! You will receive a WhatsApp confirmation shortly.'\n"
+                "4. The visit will be scheduled automatically after the call.\n"
+            )
 
         # Token counter (#11)
         token_count = count_tokens(final_instructions)
