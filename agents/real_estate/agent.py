@@ -330,6 +330,7 @@ async def entrypoint(ctx: JobContext):
     phone_number = None
     caller_name  = ""
     caller_phone = "unknown"
+    is_outbound  = False
 
     # Try metadata first (outbound dispatch)
     metadata = ctx.job.metadata or ""
@@ -337,6 +338,8 @@ async def entrypoint(ctx: JobContext):
         try:
             meta = json.loads(metadata)
             phone_number = meta.get("phone_number")
+            if phone_number and phone_number.startswith("+"):
+                is_outbound = True
         except Exception:
             pass
 
@@ -356,6 +359,28 @@ async def entrypoint(ctx: JobContext):
                 phone_number = m.group()
 
     caller_phone = phone_number or "unknown"
+
+    # ── Outbound: Dial via SIP trunk ──────────────────────────────────────
+    if is_outbound and phone_number:
+        sip_trunk_id = os.getenv("SIP_TRUNK_ID", "")
+        if not sip_trunk_id:
+            logger.error("[OUTBOUND] SIP_TRUNK_ID not set")
+            return
+        try:
+            logger.info(f"[OUTBOUND] Dialing {phone_number}")
+            await ctx.api.sip.create_sip_participant(
+                api.CreateSIPParticipantRequest(
+                    sip_trunk_id=sip_trunk_id,
+                    sip_call_to=phone_number,
+                    room_name=ctx.room.name,
+                    participant_identity=f"sip_{phone_number.replace('+', '')}",
+                    participant_name=phone_number,
+                )
+            )
+            logger.info(f"[OUTBOUND] Ringing {phone_number}")
+        except Exception as e:
+            logger.error(f"[OUTBOUND] Dial failed: {e}")
+            return
 
     # ── Rate limiting (#37) ───────────────────────────────────────────────
     if is_rate_limited(caller_phone):

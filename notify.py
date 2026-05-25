@@ -140,7 +140,7 @@ def notify_booking_cancelled(
         f"🔖 *Booking ID:* `{booking_id}`\n"
         f"💬 *Reason:*    {reason or 'Caller changed mind'}\n"
         f"━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"_RapidX AI Voice Agent_ 🤖"
+        f"_AI Voice Agent_ 🤖"
     )
     return send_telegram(message)
 
@@ -163,7 +163,7 @@ def notify_call_no_booking(
         f"━━━━━━━━━━━━━━━━━━━━━━\n"
         + f"💬 *Summary:*\n_{ai_summary or call_summary or 'Caller did not schedule.'}_\n\n"
         + f"_Consider a manual follow-up call_ 📲\n"
-        f"_RapidX AI Voice Agent_ 🤖"
+        f"_AI Voice Agent_ 🤖"
     )
     return send_telegram(message)
 
