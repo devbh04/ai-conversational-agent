@@ -337,16 +337,13 @@ class DoctorAssistant(Agent):
         super().__init__(instructions=final_instructions, tools=tools)
 
     async def on_enter(self):
-        if self._is_gemini_mode:
-            # Gemini native audio handles greeting via instructions
-            logger.info("[AGENT] Gemini mode — greeting baked into instructions, skipping generate_reply.")
-            return
         greeting = self._live_config.get(
             "first_line",
             self._first_line or (
                 "Namaskar! Main Arjun, Dr. Nehra ke clinic se bol raha hoon. Kya aapko appointment book karni hai?"
             )
         )
+        logger.info(f"[AGENT] Sending greeting via generate_reply: '{greeting[:50]}...'")
         await self.session.generate_reply(
             instructions=f"Say exactly this phrase: '{greeting}'"
         )

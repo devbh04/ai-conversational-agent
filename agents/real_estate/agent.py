@@ -312,15 +312,13 @@ class OutboundAssistant(Agent):
         super().__init__(instructions=final_instructions, tools=tools)
 
     async def on_enter(self):
-        if self._is_gemini_mode:
-            logger.info("[AGENT] Gemini mode — greeting baked into instructions, skipping generate_reply.")
-            return
         greeting = self._live_config.get(
             "first_line",
             self._first_line or (
                 "Haan ji, namaskar! Aap kaunsi property dhundh rahe hain — buy karna hai ya rent?"
             )
         )
+        logger.info(f"[AGENT] Sending greeting via generate_reply: '{greeting[:50]}...'")
         await self.session.generate_reply(
             instructions=f"Say exactly this phrase: '{greeting}'"
         )
