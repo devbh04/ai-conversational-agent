@@ -38,6 +38,7 @@ def get_available_slots(date_str: str) -> list:
 
 
 def _get_slots_calcom(date_str: str) -> list:
+    import pytz
     creds = get_cal_creds()
     try:
         resp = requests.get(
@@ -55,13 +56,42 @@ def _get_slots_calcom(date_str: str) -> list:
             timeout=8,
         )
         resp.raise_for_status()
-        # V2 response structure: data.slots["2026-05-25"] is a list of slot objects
-        raw_slots = resp.json().get("data", {}).get("slots", {}).get(date_str, [])
+        response_data = resp.json()
+        logger.info(f"[CAL] Raw v2 response keys: {list(response_data.get('data', {}).get('slots', {}).keys())}")
+
+        # V2 slots are keyed by date; try the requested date first, then iterate
+        all_slots = response_data.get("data", {}).get("slots", {})
+        raw_slots = all_slots.get(date_str, [])
+        if not raw_slots:
+            # V2 may key by full ISO datetime or different date format — grab first available
+            for key, val in all_slots.items():
+                if date_str in key and val:
+                    raw_slots = val
+                    logger.info(f"[CAL] Found slots under alternate key: {key}")
+                    break
+
+        if raw_slots:
+            logger.info(f"[CAL] Sample raw slot: {raw_slots[0]}")
+
+        ist = pytz.timezone("Asia/Kolkata")
         slots = []
         for s in raw_slots:
-            dt = datetime.fromisoformat(s["time"])
-            slots.append({"time": s["time"], "label": dt.strftime("%-I:%M %p")})
-        logger.info(f"[CAL] {len(slots)} slots for {date_str}")
+            # V2 may use "time" or "start" as the key
+            time_str = s.get("time") or s.get("start", "")
+            if not time_str:
+                logger.warning(f"[CAL] Slot missing time/start key: {s}")
+                continue
+            dt_utc = datetime.fromisoformat(time_str)
+            # Convert to IST so agent sees correct local times
+            if dt_utc.tzinfo is None:
+                import pytz as _pz
+                dt_utc = _pz.utc.localize(dt_utc)
+            dt_ist = dt_utc.astimezone(ist)
+            slots.append({
+                "time": dt_ist.isoformat(),            # IST time for booking
+                "label": dt_ist.strftime("%-I:%M %p"),  # Human-readable IST
+            })
+        logger.info(f"[CAL] {len(slots)} IST-converted slots for {date_str}")
         return slots
     except Exception as e:
         logger.error(f"[CAL] get_available_slots error: {e}")

@@ -128,6 +128,7 @@ async def doc_check_availability(date: str):
 
         if not slots:
             return {"slots": [], "formatted": "No slots available", "date": date}
+        logger.info(f"[DOC/AVAILABILITY] {len(slots)} slots for {date}. First: {slots[0] if slots else 'none'}")
         slot_labels = [s.get("label", "") for s in slots[:8]]
         return {"slots": slots, "formatted": ", ".join(slot_labels), "date": date}
     except Exception as e:

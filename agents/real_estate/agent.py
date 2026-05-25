@@ -281,10 +281,12 @@ class AgentTools(llm.ToolContext):
 
 class OutboundAssistant(Agent):
 
-    def __init__(self, agent_tools: AgentTools, first_line: str = "", live_config: dict | None = None):
+    def __init__(self, agent_tools: AgentTools, first_line: str = "",
+                 live_config: dict | None = None, is_gemini_mode: bool = False):
         tools = llm.find_function_tools(agent_tools)
         self._first_line  = first_line
         self._live_config = live_config or {}
+        self._is_gemini_mode = is_gemini_mode
         live_config_loaded = self._live_config
 
         base_instructions = live_config_loaded.get("agent_instructions", "")
@@ -292,6 +294,14 @@ class OutboundAssistant(Agent):
         lang_preset       = live_config_loaded.get("lang_preset", "multilingual")
         lang_instruction  = get_language_instruction(lang_preset)
         final_instructions = base_instructions + ist_context + lang_instruction
+
+        # In gemini native audio mode, bake the greeting into instructions
+        if is_gemini_mode:
+            greeting = live_config_loaded.get(
+                "first_line",
+                first_line or "Haan ji, namaskar! Aap kaunsi property dhundh rahe hain — buy karna hai ya rent?"
+            )
+            final_instructions = f"Start the conversation by saying exactly: '{greeting}'\n\n" + final_instructions
 
         # Token counter (#11)
         token_count = count_tokens(final_instructions)
@@ -302,6 +312,9 @@ class OutboundAssistant(Agent):
         super().__init__(instructions=final_instructions, tools=tools)
 
     async def on_enter(self):
+        if self._is_gemini_mode:
+            logger.info("[AGENT] Gemini mode — greeting baked into instructions, skipping generate_reply.")
+            return
         greeting = self._live_config.get(
             "first_line",
             self._first_line or (
@@ -547,10 +560,12 @@ async def entrypoint(ctx: JobContext):
     interrupt_count = 0  # (#30)
 
     # ── Build agent ───────────────────────────────────────────────────────
+    is_gemini = (model_mode == "gemini")
     agent = OutboundAssistant(
         agent_tools=agent_tools,
         first_line=live_config.get("first_line", ""),
         live_config=live_config,
+        is_gemini_mode=is_gemini,
     )
 
     # ── Build session (#3 noise cancellation attempted) ───────────────────
@@ -576,13 +591,11 @@ async def entrypoint(ctx: JobContext):
         gemini_voice = live_config.get("gemini_voice", "Puck")
 
         gemini_model = google.realtime.RealtimeModel(
-            model="gemini-3.1-flash-live-preview",
+            model="gemini-2.5-flash-native-audio-latest",
             voice=gemini_voice,
             temperature=0.8,
             instructions=agent.instructions,
             api_key=os.getenv("GOOGLE_API_KEY"),
-            # Enable thinking for better reasoning (adds latency):
-            # thinking_config=google.ThinkingConfig(enabled=True),
         )
 
         session = AgentSession(

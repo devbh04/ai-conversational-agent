@@ -228,7 +228,7 @@ class DoctorTools(llm.ToolContext):
         return "Call ended."
 
     # ── Tool: Check Availability (sync — agent needs slot data) ───────────
-    @llm.function_tool(description="Check available appointment slots for a given date. Call this when patient asks about availability.")
+    @llm.function_tool(description="Check available appointment slots for a specific date. Only call this when the patient asks about a date other than today or tomorrow (those are already in your context).")
     async def check_availability(
         self,
         date: Annotated[str, "Date to check in YYYY-MM-DD format e.g. '2026-03-01'"],
@@ -303,10 +303,12 @@ class DoctorTools(llm.ToolContext):
 class DoctorAssistant(Agent):
 
     def __init__(self, agent_tools: DoctorTools, first_line: str = "",
-                 live_config: dict | None = None, slot_context: str = ""):
+                 live_config: dict | None = None, slot_context: str = "",
+                 is_gemini_mode: bool = False):
         tools = llm.find_function_tools(agent_tools)
         self._first_line  = first_line
         self._live_config = live_config or {}
+        self._is_gemini_mode = is_gemini_mode
         live_config_loaded = self._live_config
 
         base_instructions = live_config_loaded.get("agent_instructions", "")
@@ -317,6 +319,15 @@ class DoctorAssistant(Agent):
         if slot_context:
             final_instructions += slot_context
 
+        # In gemini native audio mode, bake the greeting into instructions
+        # because generate_reply is not supported
+        if is_gemini_mode:
+            greeting = live_config_loaded.get(
+                "first_line",
+                first_line or "Namaskar! Main Arjun, Dr. Nehra ke clinic se bol raha hoon. Kya aapko appointment book karni hai?"
+            )
+            final_instructions = f"Start the conversation by saying exactly: '{greeting}'\n\n" + final_instructions
+
         # Token counter (#11)
         token_count = count_tokens(final_instructions)
         logger.info(f"[PROMPT] System prompt: {token_count} tokens")
@@ -326,6 +337,10 @@ class DoctorAssistant(Agent):
         super().__init__(instructions=final_instructions, tools=tools)
 
     async def on_enter(self):
+        if self._is_gemini_mode:
+            # Gemini native audio handles greeting via instructions
+            logger.info("[AGENT] Gemini mode — greeting baked into instructions, skipping generate_reply.")
+            return
         greeting = self._live_config.get(
             "first_line",
             self._first_line or (
@@ -581,28 +596,39 @@ async def entrypoint(ctx: JobContext):
     turn_count    = 0
     interrupt_count = 0  # (#30)
 
-    # ── Resolve pre-fetched slots ─────────────────────────────────────────
+    # ── Resolve pre-fetched slots (inject only top 2 from each day) ────────
     slot_context = ""
     try:
         today_resp = await slot_task_today
         tomorrow_resp = await slot_task_tomorrow
         today_data = today_resp.json() if today_resp.status_code == 200 else {}
         tomorrow_data = tomorrow_resp.json() if tomorrow_resp.status_code == 200 else {}
+
+        # Only inject top 2 slots from each day into the prompt
+        today_slots = today_data.get("slots", [])[:2]
+        tomorrow_slots = tomorrow_data.get("slots", [])[:2]
+        today_labels = ", ".join(s.get("label", "") for s in today_slots) or "No slots available"
+        tomorrow_labels = ", ".join(s.get("label", "") for s in tomorrow_slots) or "No slots available"
+
         slot_context = (
-            f"\n\n[AVAILABLE SLOTS - Use these when suggesting times]\n"
-            f"Today ({today_str}): {today_data.get('formatted', 'No slots available')}\n"
-            f"Tomorrow ({tomorrow_str}): {tomorrow_data.get('formatted', 'No slots available')}"
+            f"\n\n[AVAILABLE SLOTS — suggest these first]\n"
+            f"Today ({today_str}): {today_labels}\n"
+            f"Tomorrow ({tomorrow_str}): {tomorrow_labels}\n"
+            f"If patient wants another date or more slots, use the check_availability tool."
         )
         logger.info(f"[SLOTS] Pre-fetched: today={len(today_data.get('slots', []))}, tomorrow={len(tomorrow_data.get('slots', []))}")
+        logger.info(f"[SLOTS] Injecting top slots: today=[{today_labels}], tomorrow=[{tomorrow_labels}]")
     except Exception as e:
         logger.warning(f"[SLOTS] Pre-fetch failed: {e}")
 
     # ── Build agent ───────────────────────────────────────────────────────
+    is_gemini = (model_mode == "gemini")
     agent = DoctorAssistant(
         agent_tools=agent_tools,
         first_line=live_config.get("first_line", ""),
         live_config=live_config,
         slot_context=slot_context,
+        is_gemini_mode=is_gemini,
     )
 
     # ── Build session (#3 noise cancellation attempted) ───────────────────
@@ -628,13 +654,11 @@ async def entrypoint(ctx: JobContext):
         gemini_voice = live_config.get("gemini_voice", "Puck")
 
         gemini_model = google.realtime.RealtimeModel(
-            model="gemini-3.1-flash-live-preview",
+            model="gemini-2.5-flash-native-audio-latest",
             voice=gemini_voice,
             temperature=0.8,
             instructions=agent.instructions,
             api_key=os.getenv("GOOGLE_API_KEY"),
-            # Enable thinking for better reasoning (adds latency):
-            # thinking_config=google.ThinkingConfig(enabled=True),
         )
 
         session = AgentSession(
