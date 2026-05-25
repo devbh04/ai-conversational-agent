@@ -11,7 +11,11 @@ export function middleware(req: NextRequest) {
       if (req.nextUrl.pathname.startsWith("/api/")) {
         return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
       }
-      // Redirect to admin with login flag
+      // If we are already on the login page, let it render
+      if (req.nextUrl.searchParams.get("login") === "1") {
+        return NextResponse.next();
+      }
+      // Otherwise, redirect to admin with login flag
       const url = new URL("/admin", req.url);
       url.searchParams.set("login", "1");
       return NextResponse.redirect(url);
