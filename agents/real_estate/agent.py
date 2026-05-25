@@ -576,7 +576,7 @@ async def entrypoint(ctx: JobContext):
         gemini_voice = live_config.get("gemini_voice", "Puck")
 
         gemini_model = google.realtime.RealtimeModel(
-            model="gemini-2.5-flash-native-audio-latest",
+            model="gemini-3.1-flash-live-preview",
             voice=gemini_voice,
             temperature=0.8,
             instructions=agent.instructions,

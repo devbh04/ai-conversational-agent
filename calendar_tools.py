@@ -178,6 +178,7 @@ async def _create_booking_calcom(
             "notes": notes or f"Booked via AI voice agent. Phone: {caller_phone}",
         },
     }
+    logger.info(f"[CAL] Attempting to book via Cal.com v2. Payload: {payload}")
     try:
         async with httpx.AsyncClient(timeout=8.0) as client:
             resp = await client.post(
@@ -189,13 +190,15 @@ async def _create_booking_calcom(
                 },
                 json=payload,
             )
+            logger.info(f"[CAL] Booking API responded with status {resp.status_code}")
             if resp.status_code not in (200, 201):
                 logger.error(f"[CAL] Booking failed {resp.status_code}: {resp.text}")
                 return {"success": False, "booking_id": None, "message": resp.text}
             uid = resp.json().get("data", {}).get("uid", "unknown")
-            logger.info(f"[CAL] Booking created: uid={uid}")
+            logger.info(f"[CAL] Booking created successfully: uid={uid}")
             return {"success": True, "booking_id": uid, "message": "Booking confirmed"}
     except httpx.TimeoutException:
+        logger.error("[CAL] Booking timed out.")
         return {"success": False, "booking_id": None, "message": "Booking timed out."}
     except Exception as e:
         logger.error(f"[CAL] Booking error: {e}")
