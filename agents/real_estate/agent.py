@@ -600,7 +600,7 @@ async def entrypoint(ctx: JobContext):
         gemini_voice = live_config.get("gemini_voice", "Puck")
 
         gemini_model = google.realtime.RealtimeModel(
-            model="gemini-2.5-flash-native-audio-latest",
+            model="gemini-2.5-flash-native-audio-preview-12-2025",
             voice=gemini_voice,
             temperature=0.8,
             instructions=agent.instructions,
@@ -714,7 +714,13 @@ async def entrypoint(ctx: JobContext):
     # POST-CALL SHUTDOWN HOOK — Single fire-and-forget to backend
     # ══════════════════════════════════════════════════════════════════════
 
+    _shutdown_done = False
+
     async def unified_shutdown_hook(shutdown_ctx: JobContext):
+        nonlocal _shutdown_done
+        if _shutdown_done:
+            return
+        _shutdown_done = True
         logger.info("[SHUTDOWN] Sequence started.")
 
         duration = int((datetime.now() - call_start_time).total_seconds())

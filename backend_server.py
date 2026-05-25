@@ -430,7 +430,6 @@ async def _process_call_completed(data: dict):
                             appointment_time=start_time,
                             dental_concern=dental_concern,
                             booking_id=result.get("booking_id", ""),
-                            tts_voice=tts_voice,
                         )
                     else:
                         logger.error(f"[POST-CALL] ❌ Cal.com booking failed: {result.get('message')}")
