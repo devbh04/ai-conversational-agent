@@ -41,10 +41,13 @@ def _get_slots_calcom(date_str: str) -> list:
     creds = get_cal_creds()
     try:
         resp = requests.get(
-            f"{CAL_BASE}/slots",
-            headers={"Content-Type": "application/json"},
+            "https://api.cal.com/v2/slots/available",
+            headers={
+                "Authorization": f"Bearer {creds['api_key']}",
+                "cal-api-version": "2024-08-13",
+                "Content-Type": "application/json"
+            },
             params={
-                "apiKey":      creds["api_key"],
                 "eventTypeId": creds["event_id"],
                 "startTime":   f"{date_str}T00:00:00.000Z",
                 "endTime":     f"{date_str}T23:59:59.000Z",
@@ -52,6 +55,7 @@ def _get_slots_calcom(date_str: str) -> list:
             timeout=8,
         )
         resp.raise_for_status()
+        # V2 response structure: data.slots["2026-05-25"] is a list of slot objects
         raw_slots = resp.json().get("data", {}).get("slots", {}).get(date_str, [])
         slots = []
         for s in raw_slots:
@@ -244,9 +248,13 @@ def cancel_booking(booking_id: str, reason: str = "Cancelled by caller") -> dict
     """Cancel a Cal.com booking by UID."""
     creds = get_cal_creds()
     try:
-        resp = requests.delete(
-            f"{CAL_BASE}/bookings/{booking_id}/cancel?apiKey={creds['api_key']}",
-            headers={"Content-Type": "application/json"},
+        resp = requests.post(
+            f"https://api.cal.com/v2/bookings/{booking_id}/cancel",
+            headers={
+                "Authorization": f"Bearer {creds['api_key']}",
+                "cal-api-version": "2024-08-13",
+                "Content-Type": "application/json"
+            },
             json={"reason": reason},
             timeout=8,
         )
