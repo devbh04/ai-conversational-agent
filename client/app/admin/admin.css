@@ -110,10 +110,16 @@
 
 /* ── Data Table ────────────────────────────────────────────────────────── */
 
+.table-container {
+  width: 100%;
+  overflow-x: auto;
+}
+
 .data-table {
   width: 100%;
   border-collapse: collapse;
   font-size: 0.82rem;
+  min-width: 600px;
 }
 
 .data-table th {

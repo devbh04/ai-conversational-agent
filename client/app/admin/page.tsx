@@ -37,11 +37,21 @@ type CallLog = {
   goods_description?: string;
   quantity?: number;
   quantity_unit?: string;
+  shipment_value?: number;
+  shipment_currency?: string;
   incoterm?: string;
   dispatch_date?: string;
   container_type?: string;
+  fcl_container_details?: any;
+  cargo_weight_kg?: number;
+  cargo_length_cm?: number;
+  cargo_width_cm?: number;
+  cargo_height_cm?: number;
+  cargo_volume_cbm?: number;
+  remarks?: string;
   inquiry_complete?: boolean;
   services?: string[];
+  license_details?: any;
   missing_fields?: string[];
 };
 
@@ -311,74 +321,96 @@ function CallTable({
   }
 
   return (
-    <table className="data-table">
-      <thead>
-        <tr>
-          <th>Phone</th>
-          <th>Name</th>
-          <th>Duration</th>
-          <th>Status</th>
-          <th>Sentiment</th>
-          <th>Date</th>
-        </tr>
-      </thead>
-      <tbody>
-        {calls.map((call, i) => {
-          const rowId = call.id || `row-${i}`;
-          const isExpanded = expandedRow === rowId;
-          const isWeb = call.phone_number === "web-user";
-          return (
-            <>
-              <tr key={rowId} className="expandable" onClick={() => onToggle(rowId)}>
-                <td>
-                  {isWeb ? <span className="badge web">Web</span> : (call.phone_number || "—")}
-                </td>
-                <td>{call.caller_name || "—"}</td>
-                <td>{call.duration_seconds ? formatDuration(call.duration_seconds) : "—"}</td>
-                <td>
-                  {agent === "eximple" ? (
-                    <span className={`badge ${call.inquiry_complete ? "complete" : "incomplete"}`}>
-                      {call.inquiry_complete ? "Submitted" : "Incomplete"}
+    <div className="table-container">
+      <table className="data-table">
+        <thead>
+          <tr>
+            <th>Phone</th>
+            <th>Name</th>
+            <th>Duration</th>
+            <th>Status</th>
+            <th>Sentiment</th>
+            <th>Date</th>
+          </tr>
+        </thead>
+        <tbody>
+          {calls.map((call, i) => {
+            const rowId = call.id || `row-${i}`;
+            const isExpanded = expandedRow === rowId;
+            const isWeb = call.phone_number === "web-user";
+            return (
+              <React.Fragment key={rowId}>
+                <tr className="expandable" onClick={() => onToggle(rowId)}>
+                  <td>
+                    {isWeb ? <span className="badge web">Web</span> : (call.phone_number || "—")}
+                  </td>
+                  <td>{call.caller_name || "—"}</td>
+                  <td>{call.duration_seconds ? formatDuration(call.duration_seconds) : "—"}</td>
+                  <td>
+                    {agent === "eximple" ? (
+                      <span className={`badge ${call.inquiry_complete ? "complete" : "incomplete"}`}>
+                        {call.inquiry_complete ? "Submitted" : "Incomplete"}
+                      </span>
+                    ) : (
+                      <span className={`badge ${call.was_booked ? "booked" : "not-booked"}`}>
+                        {call.was_booked ? "Booked" : "No booking"}
+                      </span>
+                    )}
+                  </td>
+                  <td>
+                    <span className={`badge ${call.sentiment === "positive" ? "positive" : call.sentiment === "negative" || call.sentiment === "frustrated" ? "negative" : "neutral"}`}>
+                      {call.sentiment || "—"}
                     </span>
-                  ) : (
-                    <span className={`badge ${call.was_booked ? "booked" : "not-booked"}`}>
-                      {call.was_booked ? "Booked" : "No booking"}
-                    </span>
-                  )}
-                </td>
-                <td>
-                  <span className={`badge ${call.sentiment === "positive" ? "positive" : call.sentiment === "negative" || call.sentiment === "frustrated" ? "negative" : "neutral"}`}>
-                    {call.sentiment || "—"}
-                  </span>
-                </td>
-                <td>{formatDate(call.created_at)}</td>
-              </tr>
-              {isExpanded && (
-                <tr key={`${rowId}-exp`}>
-                  <td colSpan={6}>
-                    <div className="expanded-content">
-                      <div className="expanded-meta">
-                        <span>Cost: ${call.estimated_cost_usd?.toFixed(4) || "—"}</span>
-                        <span>Interrupts: {call.interrupt_count ?? "—"}</span>
-                        {agent === "doctor" && call.dental_concern && <span>Concern: {call.dental_concern}</span>}
-                        {agent === "doctor" && call.appointment_time && <span>Appointment: {call.appointment_time}</span>}
-                        {agent === "real_estate" && call.property_preferences && <span>Prefs: {call.property_preferences}</span>}
-                        {agent === "eximple" && call.company_name && <span>Company: {call.company_name}</span>}
-                        {agent === "eximple" && call.trade_direction && <span>Trade: {call.trade_direction}</span>}
-                        {agent === "eximple" && (call.port_of_loading || call.port_of_destination) && (
-                          <span>Route: {call.port_of_loading || "—"} → {call.port_of_destination || "—"}</span>
-                        )}
-                        {agent === "eximple" && call.goods_description && <span>Goods: {call.goods_description}</span>}
-                        {agent === "eximple" && call.container_type && <span>Container: {call.container_type}</span>}
-                        {agent === "eximple" && call.incoterm && <span>Incoterm: {call.incoterm}</span>}
-                        {agent === "eximple" && call.dispatch_date && <span>Dispatch: {call.dispatch_date}</span>}
-                        {agent === "eximple" && call.services && call.services.length > 0 && (
-                          <span>Services: {call.services.join(", ")}</span>
-                        )}
-                        {agent === "eximple" && call.missing_fields && call.missing_fields.length > 0 && (
-                          <span className="missing-fields">Missing: {call.missing_fields.join(", ")}</span>
-                        )}
-                      </div>
+                  </td>
+                  <td>{formatDate(call.created_at)}</td>
+                </tr>
+                {isExpanded && (
+                  <tr key={`${rowId}-exp`}>
+                    <td colSpan={6}>
+                      <div className="expanded-content">
+                        <div className="expanded-meta">
+                          <span>Cost: ${call.estimated_cost_usd?.toFixed(4) || "—"}</span>
+                          <span>Interrupts: {call.interrupt_count ?? "—"}</span>
+                          {agent === "doctor" && call.dental_concern && <span>Concern: {call.dental_concern}</span>}
+                          {agent === "doctor" && call.appointment_time && <span>Appointment: {call.appointment_time}</span>}
+                          {agent === "real_estate" && call.property_preferences && <span>Prefs: {call.property_preferences}</span>}
+                          
+                          {/* Eximple Details */}
+                          {agent === "eximple" && call.company_name && <span>Company: {call.company_name}</span>}
+                          {agent === "eximple" && call.email && <span>Email: {call.email}</span>}
+                          {agent === "eximple" && call.trade_direction && <span>Trade: {call.trade_direction}</span>}
+                          {agent === "eximple" && (call.port_of_loading || call.port_of_destination) && (
+                            <span>Route: {call.port_of_loading || "—"} → {call.port_of_destination || "—"}</span>
+                          )}
+                          {agent === "eximple" && (call.pickup_address || call.drop_off_address) && (
+                            <span>Addresses: {call.pickup_address || "—"} → {call.drop_off_address || "—"}</span>
+                          )}
+                          {agent === "eximple" && call.goods_description && <span>Goods: {call.goods_description}</span>}
+                          {agent === "eximple" && call.quantity && <span>Qty: {call.quantity} {call.quantity_unit || ""}</span>}
+                          {agent === "eximple" && call.shipment_value && <span>Value: {call.shipment_value} {call.shipment_currency || ""}</span>}
+                          {agent === "eximple" && call.container_type && <span>Container: {call.container_type}</span>}
+                          {agent === "eximple" && call.fcl_container_details && (
+                            <span>FCL Details: {typeof call.fcl_container_details === 'string' ? call.fcl_container_details : JSON.stringify(call.fcl_container_details)}</span>
+                          )}
+                          {agent === "eximple" && call.cargo_weight_kg && <span>Weight: {call.cargo_weight_kg} kg</span>}
+                          {agent === "eximple" && (call.cargo_length_cm || call.cargo_width_cm || call.cargo_height_cm) && (
+                            <span>Dims: {call.cargo_length_cm || "-"}x{call.cargo_width_cm || "-"}x{call.cargo_height_cm || "-"} cm</span>
+                          )}
+                          {agent === "eximple" && call.cargo_volume_cbm && <span>Volume: {call.cargo_volume_cbm} CBM</span>}
+                          {agent === "eximple" && call.incoterm && <span>Incoterm: {call.incoterm}</span>}
+                          {agent === "eximple" && call.dispatch_date && <span>Dispatch: {call.dispatch_date}</span>}
+                          {agent === "eximple" && call.services && call.services.length > 0 && (
+                            <span>Services: {call.services.join(", ")}</span>
+                          )}
+                          {agent === "eximple" && call.license_details && (
+                            <span>Licenses: {typeof call.license_details === 'string' ? call.license_details : JSON.stringify(call.license_details)}</span>
+                          )}
+                          {agent === "eximple" && call.remarks && <span style={{ width: '100%' }}>Remarks: {call.remarks}</span>}
+                          
+                          {agent === "eximple" && call.missing_fields && call.missing_fields.length > 0 && (
+                            <span className="missing-fields">Missing: {call.missing_fields.join(", ")}</span>
+                          )}
+                        </div>
                       {call.summary && (
                         <>
                           <h4>Summary</h4>
@@ -391,14 +423,15 @@ function CallTable({
                           <div className="transcript-text">{call.transcript}</div>
                         </>
                       )}
-                    </div>
-                  </td>
-                </tr>
-              )}
-            </>
-          );
-        })}
-      </tbody>
-    </table>
+                      </div>
+                    </td>
+                  </tr>
+                )}
+              </React.Fragment>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
   );
 }
