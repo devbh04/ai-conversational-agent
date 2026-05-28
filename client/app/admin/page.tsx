@@ -34,6 +34,8 @@ type CallLog = {
   trade_direction?: string;
   port_of_loading?: string;
   port_of_destination?: string;
+  pickup_address?: string;
+  drop_off_address?: string;
   goods_description?: string;
   quantity?: number;
   quantity_unit?: string;
