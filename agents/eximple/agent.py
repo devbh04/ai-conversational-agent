@@ -222,12 +222,10 @@ class EximpleTools(llm.ToolContext):
         logger.info("[TOOL] end_call triggered — hanging up.")
         try:
             if self.ctx_api and self.room_name and self._sip_identity:
-                await self.ctx_api.sip.transfer_sip_participant(
-                    api.TransferSIPParticipantRequest(
-                        room_name=self.room_name,
-                        participant_identity=self._sip_identity,
-                        transfer_to="tel:+00000000",
-                        play_dialtone=False,
+                await self.ctx_api.room.remove_participant(
+                    api.RoomParticipantIdentity(
+                        room=self.room_name,
+                        identity=self._sip_identity,
                     )
                 )
         except Exception as e:
