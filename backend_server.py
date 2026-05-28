@@ -586,7 +586,7 @@ async def _process_eximple_call(data: dict, phone: str, caller_name: str, durati
                 "Return ONLY valid JSON:\n"
                 "{\n"
                 '  "sentiment": "positive" | "neutral" | "negative" | "frustrated",\n'
-                '  "summary": "one-line summary of the call",\n'
+                '  "summary": "Detailed multi-sentence summary of the call explaining the client\'s needs, the goods being traded, shipping routes, and any other important context. A sales person should be able to read this and understand the full scope of the inquiry.",\n'
                 '  "inquiry_complete": true | false,\n'
                 '  "inquiry": {\n'
                 '    "phone": "..." or null,\n'
