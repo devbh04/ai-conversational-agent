@@ -166,6 +166,7 @@ def save_eximple_call(
     cargo_height_cm: float | None = None,
     cargo_volume_cbm: float | None = None,
     remarks: str = "",
+    compliance_status: str = "not_screened",
     inquiry_complete: bool = False,
     missing_fields: list | None = None,
     extraction_conflicts: list | None = None,
@@ -218,6 +219,7 @@ def save_eximple_call(
     if cargo_height_cm is not None:      data["cargo_height_cm"]        = cargo_height_cm
     if cargo_volume_cbm is not None:     data["cargo_volume_cbm"]       = cargo_volume_cbm
     if remarks:                          data["remarks"]                = remarks
+    if compliance_status:                data["compliance_status"]      = compliance_status
     if missing_fields:                   data["missing_fields"]         = missing_fields
     if extraction_conflicts:             data["extraction_conflicts"]   = extraction_conflicts
 

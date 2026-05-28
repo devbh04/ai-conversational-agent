@@ -613,7 +613,8 @@ async def _process_eximple_call(data: dict, phone: str, caller_name: str, durati
                 '    "cargo_width_cm": number or null,\n'
                 '    "cargo_height_cm": number or null,\n'
                 '    "cargo_volume_cbm": number or null,\n'
-                '    "remarks": "..." or null\n'
+                '    "remarks": "..." or null,\n'
+                '    "compliance_status": "cleared" | "restricted_item_flagged" | "permits_claimed" | "rejected_no_permits" | "rejected_illegal" or null\n'
                 '  },\n'
                 '  "missing_mandatory_fields": ["field1", ...],\n'
                 '  "conflicts": [{"field":"...","tool_value":"...","transcript_value":"...","used":"..."}]\n'
@@ -760,6 +761,7 @@ async def _process_eximple_call(data: dict, phone: str, caller_name: str, durati
         cargo_height_cm=cargo_height_cm,
         cargo_volume_cbm=cargo_volume_cbm,
         remarks=unified_inquiry.get("remarks") or "",
+        compliance_status=unified_inquiry.get("compliance_status") or tool_inquiry_data.get("compliance_status") or "not_screened",
         inquiry_complete=inquiry_complete,
         missing_fields=missing_fields if missing_fields else None,
         extraction_conflicts=conflicts if conflicts else None,

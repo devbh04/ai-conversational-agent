@@ -49,12 +49,18 @@ CREATE TABLE IF NOT EXISTS eximple_calls (
     -- Tracking
     inquiry_complete      BOOLEAN DEFAULT FALSE,
     missing_fields        JSONB,           -- ["email", "incoterm"] for incomplete inquiries
-    extraction_conflicts  JSONB            -- [{field, tool_value, transcript_value, used}]
+    extraction_conflicts  JSONB,           -- [{field, tool_value, transcript_value, used}]
+    compliance_status     TEXT DEFAULT 'not_screened'  -- cleared | restricted_item_flagged | permits_claimed | rejected_no_permits | rejected_illegal | not_screened
 );
 
 ALTER TABLE eximple_calls ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "allow_all_eximple" ON eximple_calls;
 CREATE POLICY "allow_all_eximple" ON eximple_calls FOR ALL USING (true) WITH CHECK (true);
+
+-- ══════════════════════════════════════════════════════════════════════════════
+-- MIGRATION: If table already exists, run this to add the new column:
+-- ALTER TABLE eximple_calls ADD COLUMN IF NOT EXISTS compliance_status TEXT DEFAULT 'not_screened';
+-- ══════════════════════════════════════════════════════════════════════════════
 
 -- ══════════════════════════════════════════════════════════════════════════════
 -- DONE. Run this once in Supabase SQL Editor.
