@@ -233,12 +233,25 @@ class EximpleTools(llm.ToolContext):
         return "Call ended."
 
     # ── Tool: Save Inquiry Field (progressive data capture) ───────────────
-    @llm.function_tool(description="Record a confirmed inquiry field. Call this after each piece of information is confirmed by the caller. Do not wait until the end — save fields as you go.")
+    @llm.function_tool(description="Record a confirmed inquiry field. Call this after each piece of information is confirmed by the caller. Do not wait until the end — save fields as you go. Do NOT call this multiple times for the same field and value.")
     async def save_inquiry_field(
         self,
         field_name:  Annotated[str, "Field name: phone, email, company_name, services, license_details, trade_direction, port_of_loading, port_of_destination, pickup_address, drop_off_address, goods_description, quantity, quantity_unit, shipment_value, shipment_currency, incoterm, dispatch_date, container_type, fcl_container_details, cargo_weight_kg, cargo_length_cm, cargo_width_cm, cargo_height_cm, cargo_volume_cbm, remarks, compliance_status"],
         field_value: Annotated[str, "The confirmed value from the caller"],
     ) -> str:
+        import time as _time
+
+        # ── Deduplication: prevent Gemini tool-call loops ──────────────────
+        now = _time.monotonic()
+        if not hasattr(self, "_last_saves"):
+            self._last_saves: dict[str, tuple[str, float]] = {}
+
+        last = self._last_saves.get(field_name)
+        if last and last[0] == field_value and (now - last[1]) < 5.0:
+            # Same field + value within 5 seconds — suppress to break loop
+            return ""
+
+        self._last_saves[field_name] = (field_value, now)
         self.inquiry_data[field_name] = field_value
         logger.info(f"[TOOL] save_inquiry_field: {field_name} = {field_value}")
 
