@@ -551,12 +551,13 @@ async def entrypoint(ctx: JobContext):
 
     # ── Build session (#3 noise cancellation attempted) ───────────────────
     try:
-        from livekit.agents import noise_cancellation as nc
+        from livekit.plugins.silero import VAD
+        from livekit.plugins import noise_cancellation as nc
         _noise_cancel = nc.BVC()
         logger.info("[AUDIO] BVC noise cancellation enabled")
-    except Exception:
+    except Exception as e:
         _noise_cancel = None
-        logger.info("[AUDIO] BVC not available — running without noise cancellation")
+        logger.info(f"[AUDIO] BVC not available — running without noise cancellation. Reason: {e}")
 
     room_input = RoomInputOptions(close_on_disconnect=False)
     if _noise_cancel:
