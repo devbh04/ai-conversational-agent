@@ -125,6 +125,106 @@ def save_doctor_call(
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# EXIMPLE TABLE
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def save_eximple_call(
+    phone: str,
+    duration: int,
+    transcript: str,
+    summary: str = "",
+    caller_name: str = "",
+    sentiment: str = "unknown",
+    estimated_cost_usd: float | None = None,
+    call_date: str | None = None,
+    call_hour: int | None = None,
+    call_day_of_week: str | None = None,
+    was_booked: bool = False,
+    interrupt_count: int = 0,
+    # Inquiry fields
+    email: str = "",
+    company_name: str = "",
+    services: list | None = None,
+    license_details: list | None = None,
+    trade_direction: str = "",
+    port_of_loading: str = "",
+    port_of_destination: str = "",
+    pickup_address: str = "",
+    drop_off_address: str = "",
+    goods_description: str = "",
+    quantity: float | None = None,
+    quantity_unit: str = "",
+    shipment_value: float | None = None,
+    shipment_currency: str = "",
+    incoterm: str = "",
+    dispatch_date: str | None = None,
+    container_type: str = "",
+    fcl_container_details: list | None = None,
+    cargo_weight_kg: float | None = None,
+    cargo_length_cm: float | None = None,
+    cargo_width_cm: float | None = None,
+    cargo_height_cm: float | None = None,
+    cargo_volume_cbm: float | None = None,
+    remarks: str = "",
+    inquiry_complete: bool = False,
+    missing_fields: list | None = None,
+    extraction_conflicts: list | None = None,
+) -> dict:
+    """Insert a call log into the eximple_calls table."""
+    supabase = get_supabase()
+    if not supabase:
+        logger.info(f"Supabase not configured. Local log → {phone} {duration}s")
+        return {"success": False, "message": "Supabase not configured"}
+
+    import json as _json
+
+    data: dict = {
+        "phone_number":    phone,
+        "duration_seconds": duration,
+        "transcript":      transcript,
+        "summary":         summary,
+        "sentiment":       sentiment,
+        "was_booked":      was_booked,
+        "interrupt_count": interrupt_count,
+        "inquiry_complete": inquiry_complete,
+    }
+    if caller_name:                      data["caller_name"]            = caller_name
+    if estimated_cost_usd is not None:   data["estimated_cost_usd"]     = estimated_cost_usd
+    if call_date:                        data["call_date"]              = call_date
+    if call_hour is not None:            data["call_hour"]              = call_hour
+    if call_day_of_week:                 data["call_day_of_week"]       = call_day_of_week
+    # Inquiry fields
+    if email:                            data["email"]                  = email
+    if company_name:                     data["company_name"]           = company_name
+    if services:                         data["services"]               = services
+    if license_details:                  data["license_details"]        = license_details
+    if trade_direction:                  data["trade_direction"]        = trade_direction
+    if port_of_loading:                  data["port_of_loading"]        = port_of_loading
+    if port_of_destination:              data["port_of_destination"]    = port_of_destination
+    if pickup_address:                   data["pickup_address"]         = pickup_address
+    if drop_off_address:                 data["drop_off_address"]       = drop_off_address
+    if goods_description:                data["goods_description"]      = goods_description
+    if quantity is not None:             data["quantity"]               = quantity
+    if quantity_unit:                    data["quantity_unit"]           = quantity_unit
+    if shipment_value is not None:       data["shipment_value"]         = shipment_value
+    if shipment_currency:                data["shipment_currency"]      = shipment_currency
+    if incoterm:                         data["incoterm"]               = incoterm
+    if dispatch_date:                    data["dispatch_date"]          = dispatch_date
+    if container_type:                   data["container_type"]         = container_type
+    if fcl_container_details:            data["fcl_container_details"]  = fcl_container_details
+    if cargo_weight_kg is not None:      data["cargo_weight_kg"]        = cargo_weight_kg
+    if cargo_length_cm is not None:      data["cargo_length_cm"]        = cargo_length_cm
+    if cargo_width_cm is not None:       data["cargo_width_cm"]         = cargo_width_cm
+    if cargo_height_cm is not None:      data["cargo_height_cm"]        = cargo_height_cm
+    if cargo_volume_cbm is not None:     data["cargo_volume_cbm"]       = cargo_volume_cbm
+    if remarks:                          data["remarks"]                = remarks
+    if missing_fields:                   data["missing_fields"]         = missing_fields
+    if extraction_conflicts:             data["extraction_conflicts"]   = extraction_conflicts
+
+    return _insert_with_retry(supabase, "eximple_calls", data, phone)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # LEGACY — keep for backward compat with old call_logs table
 # ═══════════════════════════════════════════════════════════════════════════════
 

@@ -8,6 +8,7 @@ const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:800
 type Stats = {
   real_estate: { total: number; booked: number; avg_duration: number; booking_rate: number };
   doctor: { total: number; booked: number; avg_duration: number; booking_rate: number };
+  eximple: { total: number; booked: number; avg_duration: number; booking_rate: number };
   combined: { total: number; booked: number; avg_duration: number; booking_rate: number };
 };
 
@@ -27,6 +28,21 @@ type CallLog = {
   appointment_time?: string;
   booking_id?: string;
   created_at?: string;
+  // Eximple fields
+  company_name?: string;
+  email?: string;
+  trade_direction?: string;
+  port_of_loading?: string;
+  port_of_destination?: string;
+  goods_description?: string;
+  quantity?: number;
+  quantity_unit?: string;
+  incoterm?: string;
+  dispatch_date?: string;
+  container_type?: string;
+  inquiry_complete?: boolean;
+  services?: string[];
+  missing_fields?: string[];
 };
 
 type CheckItem = { step: string; status: string; message: string };
@@ -42,6 +58,7 @@ export default function AdminPage() {
   const [stats, setStats] = useState<Stats | null>(null);
   const [reCalls, setReCalls] = useState<CallLog[]>([]);
   const [docCalls, setDocCalls] = useState<CallLog[]>([]);
+  const [eximpleCalls, setEximpleCalls] = useState<CallLog[]>([]);
   const [expandedRow, setExpandedRow] = useState<string | null>(null);
   const [loadingCalls, setLoadingCalls] = useState(false);
 
@@ -67,6 +84,7 @@ export default function AdminPage() {
     if (!isLoggedIn) return;
     if (tab === "real_estate" && reCalls.length === 0) fetchCalls("real_estate");
     if (tab === "doctor" && docCalls.length === 0) fetchCalls("doctor");
+    if (tab === "eximple" && eximpleCalls.length === 0) fetchCalls("eximple");
   }, [tab, isLoggedIn]);
 
   async function handleLogin(e: React.FormEvent) {
@@ -105,7 +123,8 @@ export default function AdminPage() {
       const res = await fetch(`${BACKEND_URL}/api/admin/calls?agent=${agent}&limit=50`);
       const data = await res.json();
       if (agent === "real_estate") setReCalls(data);
-      else setDocCalls(data);
+      else if (agent === "doctor") setDocCalls(data);
+      else if (agent === "eximple") setEximpleCalls(data);
     } catch { /* ignore */ }
     setLoadingCalls(false);
   }
@@ -179,6 +198,7 @@ export default function AdminPage() {
           { key: "overview", label: "Overview" },
           { key: "real_estate", label: "🏢 Real Estate" },
           { key: "doctor", label: "🦷 Doctor" },
+          { key: "eximple", label: "🚢 Eximple" },
           { key: "system", label: "System" },
         ].map((t) => (
           <button key={t.key} className={`tab${tab === t.key ? " active" : ""}`} onClick={() => setTab(t.key)}>
@@ -213,6 +233,7 @@ export default function AdminPage() {
               <div className="agent-split">
                 <span>🏢 Real Estate: {stats.real_estate.total} calls, {stats.real_estate.booked} booked</span>
                 <span>🦷 Doctor: {stats.doctor.total} calls, {stats.doctor.booked} booked</span>
+                <span>🚢 Eximple: {stats.eximple.total} calls, {stats.eximple.booked} submitted</span>
               </div>
             </>
           ) : (
@@ -222,13 +243,13 @@ export default function AdminPage() {
       )}
 
       {/* Call Logs Tab */}
-      {(tab === "real_estate" || tab === "doctor") && (
+      {(tab === "real_estate" || tab === "doctor" || tab === "eximple") && (
         <>
           {loadingCalls ? (
             <div className="loading"><span className="spinner" /> Loading calls...</div>
           ) : (
             <CallTable
-              calls={tab === "real_estate" ? reCalls : docCalls}
+              calls={tab === "real_estate" ? reCalls : tab === "doctor" ? docCalls : eximpleCalls}
               agent={tab}
               expandedRow={expandedRow}
               onToggle={(id) => setExpandedRow(expandedRow === id ? null : id)}
@@ -315,9 +336,15 @@ function CallTable({
                 <td>{call.caller_name || "—"}</td>
                 <td>{call.duration_seconds ? formatDuration(call.duration_seconds) : "—"}</td>
                 <td>
-                  <span className={`badge ${call.was_booked ? "booked" : "not-booked"}`}>
-                    {call.was_booked ? "Booked" : "No booking"}
-                  </span>
+                  {agent === "eximple" ? (
+                    <span className={`badge ${call.inquiry_complete ? "complete" : "incomplete"}`}>
+                      {call.inquiry_complete ? "Submitted" : "Incomplete"}
+                    </span>
+                  ) : (
+                    <span className={`badge ${call.was_booked ? "booked" : "not-booked"}`}>
+                      {call.was_booked ? "Booked" : "No booking"}
+                    </span>
+                  )}
                 </td>
                 <td>
                   <span className={`badge ${call.sentiment === "positive" ? "positive" : call.sentiment === "negative" || call.sentiment === "frustrated" ? "negative" : "neutral"}`}>
@@ -336,6 +363,21 @@ function CallTable({
                         {agent === "doctor" && call.dental_concern && <span>Concern: {call.dental_concern}</span>}
                         {agent === "doctor" && call.appointment_time && <span>Appointment: {call.appointment_time}</span>}
                         {agent === "real_estate" && call.property_preferences && <span>Prefs: {call.property_preferences}</span>}
+                        {agent === "eximple" && call.company_name && <span>Company: {call.company_name}</span>}
+                        {agent === "eximple" && call.trade_direction && <span>Trade: {call.trade_direction}</span>}
+                        {agent === "eximple" && (call.port_of_loading || call.port_of_destination) && (
+                          <span>Route: {call.port_of_loading || "—"} → {call.port_of_destination || "—"}</span>
+                        )}
+                        {agent === "eximple" && call.goods_description && <span>Goods: {call.goods_description}</span>}
+                        {agent === "eximple" && call.container_type && <span>Container: {call.container_type}</span>}
+                        {agent === "eximple" && call.incoterm && <span>Incoterm: {call.incoterm}</span>}
+                        {agent === "eximple" && call.dispatch_date && <span>Dispatch: {call.dispatch_date}</span>}
+                        {agent === "eximple" && call.services && call.services.length > 0 && (
+                          <span>Services: {call.services.join(", ")}</span>
+                        )}
+                        {agent === "eximple" && call.missing_fields && call.missing_fields.length > 0 && (
+                          <span className="missing-fields">Missing: {call.missing_fields.join(", ")}</span>
+                        )}
                       </div>
                       {call.summary && (
                         <>

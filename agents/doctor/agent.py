@@ -21,6 +21,15 @@ sys.path.insert(0, _PROJECT_ROOT)
 # Fix for macOS SSL certificate verification
 os.environ["SSL_CERT_FILE"] = certifi.where()
 
+# ── GCP Credentials Injection (for Vertex AI on HF Spaces) ───────────────────
+_gcp_creds = os.environ.get("GCP_CREDENTIALS_JSON")
+if _gcp_creds:
+    _gcp_path = "/tmp/gcp.json"
+    if not os.path.exists(_gcp_path):
+        with open(_gcp_path, "w") as f:
+            f.write(_gcp_creds)
+    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = _gcp_path
+
 # ── Sentry error tracking (#21) ───────────────────────────────────────────────
 import sentry_sdk
 _sentry_dsn = os.environ.get("SENTRY_DSN", "")
@@ -662,11 +671,13 @@ async def entrypoint(ctx: JobContext):
         gemini_voice = live_config.get("gemini_voice", "Puck")
 
         gemini_model = google.realtime.RealtimeModel(
-            model="gemini-2.5-flash-native-audio-preview-12-2025",
+            model="gemini-live-2.5-flash-native-audio",
             voice=gemini_voice,
             temperature=0.8,
             instructions=agent.instructions,
-            api_key=os.getenv("GOOGLE_API_KEY"),
+            vertexai=True,
+            project=os.getenv("GOOGLE_CLOUD_PROJECT", "easy-git"),
+            location=os.getenv("GOOGLE_CLOUD_LOCATION", "us-central1"),
         )
 
         session = AgentSession(

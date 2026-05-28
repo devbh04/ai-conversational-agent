@@ -48,7 +48,7 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 load_dotenv(os.path.join(_PROJECT_ROOT, ".env"))
-logger = logging.getLogger("real-estate-agent")
+logger = logging.getLogger("eximple-agent")
 logging.basicConfig(level=logging.INFO)
 
 from livekit import api
@@ -116,7 +116,7 @@ def get_live_config(phone_number: str | None = None):
         "stt_provider":             config.get("stt_provider", "sarvam"),
         "stt_language":             config.get("stt_language", "unknown"),
         "lang_preset":              config.get("lang_preset", "multilingual"),
-        "max_turns":                config.get("max_turns", 25),
+        "max_turns":                config.get("max_turns", 30),
         **config,
     }
 
@@ -147,7 +147,7 @@ def get_ist_time_context() -> str:
         f"\n\n[SYSTEM CONTEXT]\n"
         f"Current date & time: {today_str} at {time_str} IST\n"
         f"Resolve ALL relative day references using this table:\n{days_block}\n"
-        "Always use ISO dates when calling book_site_visit. Appointments in IST (+05:30).]"
+        "Always use ISO dates (YYYY-MM-DD) for dispatch dates.]"
     )
 
 
@@ -173,19 +173,17 @@ def get_language_instruction(lang_preset: str) -> str:
 
 # ══════════════════════════════════════════════════════════════════════════════
 # TOOL CONTEXT — All AI-callable functions
-# Tools that need data back (availability, business hours) → sync HTTP to backend
-# Tools that are side-effects (booking, etc.) → fire-and-forget HTTP to backend
-# Tools that need LiveKit context (transfer, end call) → stay in-process
+# Pure data gathering — no booking, no calendaring.
+# Tools: transfer_call, end_call, save_inquiry_field
 # ══════════════════════════════════════════════════════════════════════════════
 
-class AgentTools(llm.ToolContext):
+class EximpleTools(llm.ToolContext):
 
     def __init__(self, caller_phone: str, caller_name: str = ""):
         super().__init__(tools=[])
         self.caller_phone        = caller_phone
         self.caller_name         = caller_name
-        self.booking_intent: dict | None = None
-        self.property_preferences = ""
+        self.inquiry_data: dict  = {}   # progressive capture from tool calls
         self.sip_domain          = os.getenv("VOBIZ_SIP_DOMAIN")
         self.ctx_api             = None
         self.room_name           = None
@@ -193,7 +191,7 @@ class AgentTools(llm.ToolContext):
         self._tts_voice          = ""
 
     # ── Tool: Transfer to Human (stays in agent — needs SIP context) ──────
-    @llm.function_tool(description="Transfer this call to a human agent. Use if: caller asks for human, is angry, or query is outside scope.")
+    @llm.function_tool(description="Transfer this call to a senior team member. Use if: caller asks for human, is angry, or query is outside scope.")
     async def transfer_call(self) -> str:
         logger.info("[TOOL] transfer_call triggered")
         destination = os.getenv("DEFAULT_TRANSFER_NUMBER")
@@ -219,7 +217,7 @@ class AgentTools(llm.ToolContext):
             return "Unable to transfer right now."
 
     # ── Tool: End Call (stays in agent — needs SIP context) ────────────────
-    @llm.function_tool(description="End the call. Use ONLY when caller says bye/goodbye or after booking is fully confirmed.")
+    @llm.function_tool(description="End the call. Use ONLY when caller says bye/goodbye or after inquiry is fully confirmed.")
     async def end_call(self) -> str:
         logger.info("[TOOL] end_call triggered — hanging up.")
         try:
@@ -236,64 +234,31 @@ class AgentTools(llm.ToolContext):
             logger.warning(f"[END-CALL] SIP hangup failed: {e}")
         return "Call ended."
 
-    # ── Tool: Book Site Visit (fire-and-forget to backend) ────────────
-    @llm.function_tool(description="Save site visit request. Call this ONCE after you have name, phone, preferred time, and property preferences (BHK, budget, area).")
-    async def book_site_visit(
+    # ── Tool: Save Inquiry Field (progressive data capture) ───────────────
+    @llm.function_tool(description="Record a confirmed inquiry field. Call this after each piece of information is confirmed by the caller. Do not wait until the end — save fields as you go.")
+    async def save_inquiry_field(
         self,
-        visit_time:  Annotated[str,  "ISO 8601 datetime for the visit e.g. '2026-03-01T10:00:00+05:30'"],
-        caller_name: Annotated[str,  "Full name of the caller"],
-        caller_phone:Annotated[str,  "Phone number of the caller"],
-        property_preferences: Annotated[str, "Summary of what they want: e.g. 2BHK, 50L budget, Andheri"],
-        notes:       Annotated[str,  "Any extra notes or requests"] = "",
+        field_name:  Annotated[str, "Field name: phone, email, company_name, services, license_details, trade_direction, port_of_loading, port_of_destination, pickup_address, drop_off_address, goods_description, quantity, quantity_unit, shipment_value, shipment_currency, incoterm, dispatch_date, container_type, fcl_container_details, cargo_weight_kg, cargo_length_cm, cargo_width_cm, cargo_height_cm, cargo_volume_cbm, remarks"],
+        field_value: Annotated[str, "The confirmed value from the caller"],
     ) -> str:
-        logger.info(f"[TOOL] book_site_visit: {caller_name} at {visit_time}")
-        try:
-            self.booking_intent = {
-                "visit_time":   visit_time,
-                "caller_name":  caller_name,
-                "caller_phone": caller_phone,
-                "notes":        notes,
-            }
-            self.caller_name = caller_name
-            self.property_preferences = property_preferences
-            # Fire-and-forget to backend — don't block the agent
-            asyncio.create_task(_backend.post("/api/re/book-site-visit", json={
-                "visit_time":   visit_time,
-                "caller_name":  caller_name,
-                "caller_phone": caller_phone,
-                "property_preferences": property_preferences,
-                "notes":        notes,
-                "tts_voice":    self._tts_voice,
-            }))
-            return f"Site visit noted for {caller_name} at {visit_time}. I'll have the team send a WhatsApp confirmation."
-        except Exception as e:
-            logger.error(f"[TOOL] book_site_visit failed: {e}")
-            return "I had trouble noting down the visit. Please try again."
+        self.inquiry_data[field_name] = field_value
+        logger.info(f"[TOOL] save_inquiry_field: {field_name} = {field_value}")
 
+        # Update caller_name if company_name is provided
+        if field_name == "company_name" and field_value:
+            self.caller_name = field_value
 
-
-    # ── Tool: Business Hours (sync — agent needs hours data) ──────────────
-    @llm.function_tool(description="Check if the business is currently open and what the operating hours are.")
-    async def get_business_hours(self) -> str:
-        try:
-            resp = await _backend.get("/api/re/business-hours")
-            data = resp.json()
-            return data.get("message", "Unable to check business hours right now.")
-        except Exception as e:
-            logger.error(f"[TOOL] get_business_hours failed: {e}")
-            return "Unable to check business hours right now."
+        return f"Noted {field_name}."
 
 
 # ══════════════════════════════════════════════════════════════════════════════
 # AGENT CLASS
 # ══════════════════════════════════════════════════════════════════════════════
 
-class OutboundAssistant(Agent):
+class EximpleAssistant(Agent):
 
-    def __init__(self, agent_tools: AgentTools, first_line: str = "",
+    def __init__(self, agent_tools: EximpleTools, first_line: str = "",
                  live_config: dict | None = None, is_gemini_mode: bool = False):
-        # Register all tools — if Gemini 1008 crashes tool calls,
-        # the post-call Azure fallback in backend handles booking
         tools = llm.find_function_tools(agent_tools)
 
         self._first_line  = first_line
@@ -307,20 +272,20 @@ class OutboundAssistant(Agent):
         lang_instruction  = get_language_instruction(lang_preset)
         final_instructions = base_instructions + ist_context + lang_instruction
 
-        # In gemini mode, add post-call site visit instructions
+        # In gemini mode, prepend greeting instruction
         if is_gemini_mode:
             greeting = live_config_loaded.get(
                 "first_line",
-                first_line or "Haan ji, namaskar! Aap kaunsi property dhundh rahe hain — buy karna hai ya rent?"
+                first_line or "Namaskar! Main Arjun, Eximple se bol raha hoon. Aapki trade inquiry mein help karta hoon — please apna naam aur company bataiye?"
             )
             final_instructions = f"Start the conversation by saying exactly: '{greeting}'\n\n" + final_instructions
             final_instructions += (
-                "\n\n[IMPORTANT — SITE VISIT FLOW]\n"
-                "You CANNOT schedule site visits directly. Instead:\n"
-                "1. Collect: visitor name, preferred date/time, property preferences, and budget.\n"
-                "2. Repeat back to confirm the details.\n"
-                "3. Once confirmed, say: 'Your site visit is noted! You will receive a WhatsApp confirmation shortly.'\n"
-                "4. The visit will be scheduled automatically after the call.\n"
+                "\n\n[IMPORTANT — INQUIRY FLOW]\n"
+                "You CANNOT submit inquiries directly. Instead:\n"
+                "1. Collect all mandatory fields progressively using save_inquiry_field.\n"
+                "2. Summarise the inquiry back to the caller.\n"
+                "3. Once confirmed, say: 'We have noted your inquiry! Our team will reach out with a quote shortly.'\n"
+                "4. The inquiry will be processed automatically after the call.\n"
             )
 
         # Token counter (#11)
@@ -335,7 +300,7 @@ class OutboundAssistant(Agent):
         greeting = self._live_config.get(
             "first_line",
             self._first_line or (
-                "Haan ji, namaskar! Aap kaunsi property dhundh rahe hain — buy karna hai ya rent?"
+                "Namaskar! Main Arjun, Eximple se bol raha hoon. Aapki trade inquiry mein help karta hoon — please apna naam aur company bataiye?"
             )
         )
         logger.info(f"[AGENT] Sending greeting via generate_reply: '{greeting[:50]}...'")
@@ -428,11 +393,11 @@ async def entrypoint(ctx: JobContext):
     tts_provider  = live_config.get("tts_provider", "sarvam")
     stt_provider  = live_config.get("stt_provider", "sarvam")
     stt_language  = live_config.get("stt_language", "unknown")  # auto-detect (#20)
-    max_turns     = live_config.get("max_turns", 25)
+    max_turns     = live_config.get("max_turns", 30)
 
     # Override OS env vars from UI config
     for key in ["LIVEKIT_URL","LIVEKIT_API_KEY","LIVEKIT_API_SECRET","OPENAI_API_KEY",
-                "SARVAM_API_KEY","CAL_API_KEY","TELEGRAM_BOT_TOKEN","SUPABASE_URL","SUPABASE_KEY"]:
+                "SARVAM_API_KEY","TELEGRAM_BOT_TOKEN","SUPABASE_URL","SUPABASE_KEY"]:
         val = live_config.get(key.lower(), "")
         if val:
             os.environ[key] = val
@@ -446,7 +411,7 @@ async def entrypoint(ctx: JobContext):
             sb = db.get_supabase()
             if not sb:
                 return ""
-            result = (sb.table("real_estate_calls")
+            result = (sb.table("eximple_calls")
                         .select("summary, created_at")
                         .eq("phone_number", phone)
                         .order("created_at", desc=True)
@@ -462,11 +427,10 @@ async def entrypoint(ctx: JobContext):
     caller_history = await get_caller_history(caller_phone)
     if caller_history:
         logger.info(f"[MEMORY] Loaded caller history for {caller_phone}")
-        # Append to live_config instructions
         live_config["agent_instructions"] = (live_config.get("agent_instructions","") + caller_history)
 
     # ── Instantiate tools ─────────────────────────────────────────────────
-    agent_tools = AgentTools(caller_phone=caller_phone, caller_name=caller_name)
+    agent_tools = EximpleTools(caller_phone=caller_phone, caller_name=caller_name)
     agent_tools._sip_identity = (
         f"sip_{caller_phone.replace('+','')}" if phone_number else "inbound_caller"
     )
@@ -491,7 +455,6 @@ async def entrypoint(ctx: JobContext):
             )
             logger.info(f"[LLM] Using Groq: {llm_model}")
         elif llm_provider == "claude":
-            # Claude Haiku 3.5 via Anthropic API (#27)
             _anthropic_key = os.environ.get("ANTHROPIC_API_KEY", "")
             agent_llm = openai.LLM(
                 model=llm_model or "claude-haiku-3-5-latest",
@@ -509,7 +472,7 @@ async def entrypoint(ctx: JobContext):
             )
             logger.info(f"[LLM] Using Azure OpenAI: {llm_model}")
         else:
-            agent_llm = openai.LLM(model=llm_model, max_completion_tokens=120)  # cap tokens (#7)
+            agent_llm = openai.LLM(model=llm_model, max_completion_tokens=120)
             logger.info(f"[LLM] Using OpenAI: {llm_model}")
 
         # ── Build STT (#1 16kHz, #20 auto-detect, #9 Deepgram) ──────────────
@@ -518,7 +481,7 @@ async def entrypoint(ctx: JobContext):
                 from livekit.plugins import deepgram
                 agent_stt = deepgram.STT(
                     model="nova-2-general",
-                    language="multi",        # multilingual mode
+                    language="multi",
                     interim_results=False,
                 )
                 logger.info("[STT] Using Deepgram Nova-2")
@@ -533,11 +496,11 @@ async def entrypoint(ctx: JobContext):
                 )
         else:
             agent_stt = sarvam.STT(
-                language=stt_language,      # "unknown" = auto-detect (#20)
+                language=stt_language,
                 model="saaras:v3",
                 mode="translate",
                 flush_signal=True,
-                sample_rate=16000,          # force 16kHz (#1)
+                sample_rate=16000,
             )
             logger.info("[STT] Using Sarvam Saaras v3")
 
@@ -564,7 +527,7 @@ async def entrypoint(ctx: JobContext):
                 target_language_code=tts_language,
                 model="bulbul:v3",
                 speaker=tts_voice,
-                speech_sample_rate=24000,          # force 24kHz (#2)
+                speech_sample_rate=24000,
             )
             logger.info(f"[TTS] Using Sarvam Bulbul v3 — voice: {tts_voice} lang: {tts_language}")
 
@@ -579,7 +542,7 @@ async def entrypoint(ctx: JobContext):
 
     # ── Build agent ───────────────────────────────────────────────────────
     is_gemini = (model_mode == "gemini")
-    agent = OutboundAssistant(
+    agent = EximpleAssistant(
         agent_tools=agent_tools,
         first_line=live_config.get("first_line", ""),
         live_config=live_config,
@@ -629,7 +592,7 @@ async def entrypoint(ctx: JobContext):
             llm=agent_llm,
             tts=agent_tts,
             turn_detection="stt",
-            min_endpointing_delay=float(delay_setting),  # 0.05 default (#6)
+            min_endpointing_delay=float(delay_setting),
             allow_interruptions=True,
         )
 
@@ -710,7 +673,7 @@ async def entrypoint(ctx: JobContext):
             logger.info(f"[LIMIT] Reached {max_turns} turns — wrapping up")
             asyncio.create_task(
                 session.generate_reply(
-                    instructions="Politely wrap up: thank the caller, say they can call back anytime, and say a warm goodbye."
+                    instructions="Politely wrap up: summarise whatever inquiry data you have, say the team will follow up for any missing details, and say a warm goodbye."
                 )
             )
 
@@ -763,16 +726,15 @@ async def entrypoint(ctx: JobContext):
         }))
 
         # Single fire-and-forget POST — backend handles everything:
-        # sentiment analysis, cost estimation, DB writes, notifications, webhooks
+        # GPT extraction, unification, validation, DB writes, Telegram notifications
         try:
             asyncio.create_task(_backend.post("/api/internal/call-completed", json={
                 "phone":           caller_phone,
                 "caller_name":     agent_tools.caller_name or "",
                 "duration":        duration,
                 "transcript":      transcript_text,
-                "agent_type":      "real_estate",
-                "booking_intent":  agent_tools.booking_intent,
-                "property_preferences": agent_tools.property_preferences,
+                "agent_type":      "eximple",
+                "inquiry_data":    agent_tools.inquiry_data,  # Source A — tool-captured
                 "interrupt_count": interrupt_count,
                 "tts_voice":       tts_voice,
                 "room_name":       ctx.room.name,
@@ -791,6 +753,6 @@ async def entrypoint(ctx: JobContext):
 if __name__ == "__main__":
     cli.run_app(WorkerOptions(
         entrypoint_fnc=entrypoint,
-        agent_name="real-estate-agent",
-        port=8083,
+        agent_name="eximple-agent",
+        port=8084,
     ))

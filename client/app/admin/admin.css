@@ -213,6 +213,19 @@
   font-size: 0.85rem;
 }
 
+/* ── Eximple Specific ──────────────────────────────────────────────────── */
+
+.badge.complete { background: var(--green-light); color: var(--green); }
+.badge.incomplete { background: var(--accent-light); color: var(--accent); }
+
+.missing-fields {
+  display: block;
+  margin-top: 0.4rem;
+  color: var(--red);
+  font-weight: 500;
+  font-size: 0.72rem;
+}
+
 /* ── Responsive ────────────────────────────────────────────────────────── */
 
 @media (max-width: 700px) {

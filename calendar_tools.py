@@ -194,6 +194,13 @@ async def _create_booking_calcom(
     start_time: str, caller_name: str, caller_phone: str, notes: str
 ) -> dict:
     creds = get_cal_creds()
+
+    # Normalize timezone — Gemini sometimes sends times without offset.
+    # Cal.com treats bare times as UTC, so we force IST if missing.
+    if "+" not in start_time and "Z" not in start_time:
+        start_time = start_time + "+05:30"
+        logger.info(f"[CAL] Added IST offset to start_time: {start_time}")
+
     payload = {
         "eventTypeId": creds["event_id"],
         "start": start_time,

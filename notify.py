@@ -279,3 +279,175 @@ async def send_webhook(webhook_url: str, event_type: str, payload: dict) -> bool
     except Exception as e:
         logger.warning(f"[WEBHOOK] Failed to deliver {event_type}: {e}")
         return False
+
+
+# ─── Telegram with Retry (timeout-safe) ──────────────────────────────────────
+
+def _send_telegram_with_retry(message: str, max_retries: int = 2) -> bool:
+    """Send Telegram with retry on timeout — handles long messages gracefully."""
+    import time as _time
+
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        logger.warning("[TELEGRAM] Token or Chat ID not set — skipping.")
+        return False
+
+    for attempt in range(max_retries + 1):
+        try:
+            resp = requests.post(
+                TELEGRAM_URL,
+                json={"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "Markdown"},
+                timeout=10,  # longer timeout for retries
+            )
+            resp.raise_for_status()
+            logger.info("[TELEGRAM] Message sent.")
+            return True
+        except requests.exceptions.Timeout:
+            logger.warning(f"[TELEGRAM] Timeout (attempt {attempt+1}/{max_retries+1})")
+            if attempt < max_retries:
+                _time.sleep(1)
+                continue
+        except Exception as e:
+            logger.error(f"[TELEGRAM] Failed: {e}")
+            break
+    return False
+
+
+# ─── Eximple Trade Inquiry Notifications ──────────────────────────────────────
+
+def notify_eximple_inquiry(
+    caller_name: str,
+    caller_phone: str,
+    company_name: str = "",
+    trade_direction: str = "",
+    port_of_loading: str = "",
+    port_of_destination: str = "",
+    goods_description: str = "",
+    quantity: str = "",
+    quantity_unit: str = "",
+    incoterm: str = "",
+    dispatch_date: str = "",
+    container_type: str = "",
+    inquiry_complete: bool = False,
+    duration_seconds: int = 0,
+    services: list | None = None,
+    email: str = "",
+    remarks: str = "",
+    shipment_value: str = "",
+    shipment_currency: str = "",
+    pickup_address: str = "",
+    drop_off_address: str = "",
+    license_details: list | None = None,
+    cargo_weight_kg: str = "",
+    cargo_length_cm: str = "",
+    cargo_width_cm: str = "",
+    cargo_height_cm: str = "",
+    cargo_volume_cbm: str = "",
+    fcl_container_details: list | None = None,
+    missing_fields: list | None = None,
+    **kwargs,
+) -> bool:
+    """Telegram notification with all collected trade inquiry fields."""
+    status_icon = "✅" if inquiry_complete else "⚠️"
+    status_text = "Inquiry Submitted" if inquiry_complete else "Incomplete Inquiry"
+
+    # Format services
+    services_text = ", ".join(services) if services else "—"
+
+    # Format FCL/LCL details
+    container_detail = ""
+    if container_type and container_type.upper() == "FCL" and fcl_container_details:
+        parts = []
+        for c in fcl_container_details:
+            if isinstance(c, dict):
+                parts.append(f"{c.get('container_size', '?')} × {c.get('quantity', '?')}")
+            else:
+                parts.append(str(c))
+        container_detail = f" ({', '.join(parts)})"
+    elif container_type and container_type.upper() == "LCL":
+        dims = []
+        if cargo_weight_kg:  dims.append(f"{cargo_weight_kg}kg")
+        lcm_parts = []
+        if cargo_length_cm: lcm_parts.append(str(cargo_length_cm))
+        if cargo_width_cm:  lcm_parts.append(str(cargo_width_cm))
+        if cargo_height_cm: lcm_parts.append(str(cargo_height_cm))
+        if lcm_parts:       dims.append(f"{'×'.join(lcm_parts)}cm")
+        if cargo_volume_cbm: dims.append(f"{cargo_volume_cbm} CBM")
+        container_detail = f" ({', '.join(dims)})" if dims else ""
+
+    # Format license details
+    license_text = "—"
+    if license_details:
+        if isinstance(license_details, list):
+            parts = []
+            for lic in license_details:
+                if isinstance(lic, dict):
+                    parts.append(lic.get("name", str(lic)))
+                else:
+                    parts.append(str(lic))
+            license_text = ", ".join(parts)
+        else:
+            license_text = str(license_details)
+
+    # Format shipment value
+    value_text = "—"
+    if shipment_value:
+        value_text = f"{shipment_currency or ''} {shipment_value}".strip()
+
+    message = (
+        f"{status_icon} *{status_text}*\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"👤 *Name:*       {caller_name or 'Unknown'}\n"
+        f"🏢 *Company:*    {company_name or '—'}\n"
+        f"📞 *Phone:*      `{caller_phone}`\n"
+        f"📧 *Email:*      {email or '—'}\n"
+        f"⏱️ *Duration:*   {duration_seconds}s\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"📦 *Trade:*      {trade_direction or '—'}\n"
+        f"🚢 *Route:*      {port_of_loading or '—'} → {port_of_destination or '—'}\n"
+        f"📍 *Pickup:*     {pickup_address or '—'}\n"
+        f"📍 *Drop-off:*   {drop_off_address or '—'}\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"📋 *Goods:*      {goods_description or '—'}\n"
+        f"📊 *Qty:*        {quantity or '—'} {quantity_unit or ''}\n"
+        f"💰 *Value:*      {value_text}\n"
+        f"📜 *Incoterm:*   {incoterm or '—'}\n"
+        f"📅 *Dispatch:*   {dispatch_date or '—'}\n"
+        f"📦 *Container:*  {container_type or '—'}{container_detail}\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"🔧 *Services:*   {services_text}\n"
+        f"📑 *Licenses:*   {license_text}\n"
+        f"📝 *Remarks:*    {remarks or '—'}\n"
+    )
+
+    if missing_fields:
+        message += f"━━━━━━━━━━━━━━━━━━━━━━\n"
+        message += f"❗ *Missing:*    {', '.join(missing_fields)}\n"
+
+    message += (
+        f"━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"_Eximple AI Voice Agent_ 🚢"
+    )
+
+    return _send_telegram_with_retry(message)
+
+
+def notify_eximple_call_no_inquiry(
+    caller_name: str,
+    caller_phone: str,
+    call_summary: str = "",
+    duration_seconds: int = 0,
+) -> bool:
+    """Telegram notification when an Eximple call ends without any inquiry data."""
+    message = (
+        f"📵 *Eximple Call — No Inquiry Data*\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"👤 *Name:*      {caller_name or 'Unknown'}\n"
+        f"📞 *Phone:*     `{caller_phone}`\n"
+        f"⏱️ *Duration:*  {duration_seconds}s\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"💬 *Summary:*\n_{call_summary or 'Caller did not provide inquiry details.'}_\n\n"
+        f"_Consider a follow-up call_ 📲\n"
+        f"_Eximple AI Voice Agent_ 🚢"
+    )
+    return _send_telegram_with_retry(message)
+

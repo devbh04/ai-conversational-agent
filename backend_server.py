@@ -29,6 +29,17 @@ import db
 import notify
 import calendar_tools
 
+# ── GCP Credentials Injection (for Vertex AI on HF Spaces) ───────────────────
+# On HF Spaces, the GCP JSON key is stored as a Secret (env var).
+# We write it to a temp file so Google's SDK can authenticate.
+_gcp_creds = os.environ.get("GCP_CREDENTIALS_JSON")
+if _gcp_creds:
+    _gcp_path = "/tmp/gcp.json"
+    with open(_gcp_path, "w") as f:
+        f.write(_gcp_creds)
+    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = _gcp_path
+    logging.getLogger("backend-server").info(f"[GCP] Credentials written to {_gcp_path}")
+
 load_dotenv()
 
 logging.basicConfig(level=logging.INFO)
@@ -275,6 +286,15 @@ async def _process_call_completed(data: dict):
     # Agent-specific fields
     property_preferences = data.get("property_preferences", "")
     dental_concern = data.get("dental_concern", "")
+    inquiry_data = data.get("inquiry_data", {})  # Eximple: tool-captured fields
+
+    # ══════════════════════════════════════════════════════════════════════
+    # EXIMPLE AGENT — Dual-source extraction + unification
+    # ══════════════════════════════════════════════════════════════════════
+    if agent_type == "eximple":
+        await _process_eximple_call(data, phone, caller_name, duration, transcript,
+                                    interrupt_count, tts_voice, inquiry_data)
+        return
 
     # ── Azure GPT-4o-mini: Extract booking + sentiment from transcript ────
     sentiment = "unknown"
@@ -519,6 +539,287 @@ async def _process_call_completed(data: dict):
             property_preferences=property_preferences,
             site_visit_time=booking_intent.get("visit_time") if booking_intent else "",
         )
+
+
+async def _process_eximple_call(data: dict, phone: str, caller_name: str, duration: int,
+                                transcript: str, interrupt_count: int, tts_voice: str,
+                                tool_inquiry_data: dict):
+    """Eximple post-call pipeline: GPT dual-source extraction → validation → DB → Telegram."""
+    logger.info(f"[EXIMPLE] Processing inquiry for {phone}. Tool-captured fields: {list(tool_inquiry_data.keys())}")
+
+    sentiment = "unknown"
+    extracted_summary = ""
+    unified_inquiry = {}
+    missing_fields = []
+    conflicts = []
+    inquiry_complete = False
+
+    # ── GPT-4o-mini: Dual-source extraction + unification ─────────────────
+    if transcript and transcript != "unavailable":
+        try:
+            import openai as _oai
+
+            _azure_endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT", "")
+            _azure_key = os.environ.get("AZURE_OPENAI_API_KEY", "")
+            _azure_deployment = os.environ.get("AZURE_OPENAI_DEPLOYMENT", "gpt-4o-mini")
+            _azure_version = os.environ.get("AZURE_OPENAI_API_VERSION", "2024-10-01-preview")
+
+            if _azure_endpoint and _azure_key:
+                _client = _oai.AsyncAzureOpenAI(
+                    azure_endpoint=_azure_endpoint,
+                    api_key=_azure_key,
+                    api_version=_azure_version,
+                )
+                model_name = _azure_deployment
+            else:
+                _client = _oai.AsyncOpenAI(api_key=os.environ.get("OPENAI_API_KEY", ""))
+                model_name = "gpt-4o-mini"
+
+            extraction_prompt = (
+                "You are a trade data extraction specialist. This is SENSITIVE shipment data — "
+                "NEVER fabricate or guess values. If unsure, set the field to null.\n\n"
+                "The voice agent already captured these fields during the call (Source A):\n"
+                f"{json.dumps(tool_inquiry_data, indent=2)}\n\n"
+                "Now extract ALL inquiry fields from this call transcript (Source B).\n"
+                "Compare Source A and Source B. For conflicts, prefer the transcript "
+                "(it has more context). Never invent data not mentioned in the transcript.\n\n"
+                "Return ONLY valid JSON:\n"
+                "{\n"
+                '  "sentiment": "positive" | "neutral" | "negative" | "frustrated",\n'
+                '  "summary": "one-line summary of the call",\n'
+                '  "inquiry_complete": true | false,\n'
+                '  "inquiry": {\n'
+                '    "phone": "..." or null,\n'
+                '    "email": "..." or null,\n'
+                '    "company_name": "..." or null,\n'
+                '    "services": ["Freight Forwarding", ...] or null,\n'
+                '    "license_details": [{"type":"...", "name":"..."}] or null,\n'
+                '    "trade_direction": "export" | "import" or null,\n'
+                '    "port_of_loading": "..." or null,\n'
+                '    "port_of_destination": "..." or null,\n'
+                '    "pickup_address": "..." or null,\n'
+                '    "drop_off_address": "..." or null,\n'
+                '    "goods_description": "..." or null,\n'
+                '    "quantity": number or null,\n'
+                '    "quantity_unit": "..." or null,\n'
+                '    "shipment_value": number or null,\n'
+                '    "shipment_currency": "..." or null,\n'
+                '    "incoterm": "FOB"|"CIF"|"EXW"|"DAP" or null,\n'
+                '    "dispatch_date": "YYYY-MM-DD" or null,\n'
+                '    "container_type": "FCL" | "LCL" or null,\n'
+                '    "fcl_container_details": [{"container_size":"20ft","quantity":1}] or null,\n'
+                '    "cargo_weight_kg": number or null,\n'
+                '    "cargo_length_cm": number or null,\n'
+                '    "cargo_width_cm": number or null,\n'
+                '    "cargo_height_cm": number or null,\n'
+                '    "cargo_volume_cbm": number or null,\n'
+                '    "remarks": "..." or null\n'
+                '  },\n'
+                '  "missing_mandatory_fields": ["field1", ...],\n'
+                '  "conflicts": [{"field":"...","tool_value":"...","transcript_value":"...","used":"..."}]\n'
+                "}\n\n"
+                "MANDATORY FIELDS: company_name, services, trade_direction, port_of_loading, "
+                "port_of_destination, goods_description, quantity, quantity_unit, incoterm, "
+                "dispatch_date, container_type\n"
+                "If container_type=FCL: fcl_container_details is mandatory\n"
+                "If container_type=LCL: cargo_weight_kg + at least one dimension field is mandatory\n\n"
+                f"The caller's phone number is: {phone}\n"
+                f"Today's date is: {datetime.now(pytz.timezone('Asia/Kolkata')).strftime('%Y-%m-%d')}\n\n"
+                f"TRANSCRIPT:\n{transcript[:3000]}"
+            )
+
+            resp = await _client.chat.completions.create(
+                model=model_name,
+                max_tokens=800,
+                temperature=0,
+                response_format={"type": "json_object"},
+                messages=[{"role": "user", "content": extraction_prompt}],
+            )
+
+            raw_json = resp.choices[0].message.content.strip()
+            logger.info(f"[EXIMPLE] GPT extraction: {raw_json[:800]}")
+
+            extracted = json.loads(raw_json)
+            sentiment = extracted.get("sentiment", "unknown")
+            extracted_summary = extracted.get("summary", "")
+            inquiry_complete = extracted.get("inquiry_complete", False)
+            unified_inquiry = extracted.get("inquiry", {})
+            missing_fields = extracted.get("missing_mandatory_fields", [])
+            conflicts = extracted.get("conflicts", [])
+
+            if conflicts:
+                logger.info(f"[EXIMPLE] Conflicts detected: {conflicts}")
+
+            # Update caller_name from extraction if available
+            if unified_inquiry.get("company_name"):
+                caller_name = unified_inquiry["company_name"]
+
+        except json.JSONDecodeError as e:
+            logger.warning(f"[EXIMPLE] JSON parse failed: {e}")
+        except Exception as e:
+            logger.warning(f"[EXIMPLE] GPT extraction failed: {e}")
+
+    # If GPT extraction failed entirely, fall back to tool-captured data
+    if not unified_inquiry and tool_inquiry_data:
+        logger.info("[EXIMPLE] GPT extraction failed — using tool-captured data as fallback")
+        unified_inquiry = tool_inquiry_data.copy()
+
+    # ── Python-side validation ────────────────────────────────────────────
+    def _safe_float(val):
+        if val is None:
+            return None
+        try:
+            return float(val)
+        except (ValueError, TypeError):
+            return None
+
+    def _safe_date(val):
+        if not val:
+            return None
+        try:
+            datetime.strptime(str(val), "%Y-%m-%d")
+            return str(val)
+        except ValueError:
+            return None
+
+    # Sanitize numeric fields
+    quantity = _safe_float(unified_inquiry.get("quantity"))
+    shipment_value = _safe_float(unified_inquiry.get("shipment_value"))
+    cargo_weight_kg = _safe_float(unified_inquiry.get("cargo_weight_kg"))
+    cargo_length_cm = _safe_float(unified_inquiry.get("cargo_length_cm"))
+    cargo_width_cm = _safe_float(unified_inquiry.get("cargo_width_cm"))
+    cargo_height_cm = _safe_float(unified_inquiry.get("cargo_height_cm"))
+    cargo_volume_cbm = _safe_float(unified_inquiry.get("cargo_volume_cbm"))
+    dispatch_date = _safe_date(unified_inquiry.get("dispatch_date"))
+
+    # Normalize services to list
+    services = unified_inquiry.get("services")
+    if isinstance(services, str):
+        services = [s.strip() for s in services.split(",") if s.strip()]
+    elif not isinstance(services, list):
+        services = None
+
+    # Normalize license_details
+    license_details = unified_inquiry.get("license_details")
+    if isinstance(license_details, str):
+        license_details = [{"type": "License", "name": license_details}]
+
+    # Normalize fcl_container_details
+    fcl_details = unified_inquiry.get("fcl_container_details")
+    if isinstance(fcl_details, str):
+        try:
+            fcl_details = json.loads(fcl_details)
+        except Exception:
+            fcl_details = None
+
+    # ── Cost estimation ───────────────────────────────────────────────────
+    def estimate_cost(dur: int, chars: int) -> float:
+        return round(
+            (dur / 60) * 0.002 + (dur / 60) * 0.006
+            + (chars / 1000) * 0.003 + (chars / 4000) * 0.0001, 5
+        )
+
+    estimated_cost = estimate_cost(duration, len(transcript))
+
+    # ── Timestamps ────────────────────────────────────────────────────────
+    ist = pytz.timezone("Asia/Kolkata")
+    call_dt = datetime.now(ist)
+
+    # ── Save to Supabase ──────────────────────────────────────────────────
+    db.save_eximple_call(
+        phone=phone, duration=duration, transcript=transcript,
+        summary=extracted_summary or "Trade inquiry call",
+        caller_name=caller_name, sentiment=sentiment,
+        estimated_cost_usd=estimated_cost,
+        call_date=call_dt.date().isoformat(),
+        call_hour=call_dt.hour,
+        call_day_of_week=call_dt.strftime("%A"),
+        was_booked=inquiry_complete, interrupt_count=interrupt_count,
+        # Inquiry fields
+        email=unified_inquiry.get("email") or "",
+        company_name=unified_inquiry.get("company_name") or "",
+        services=services,
+        license_details=license_details,
+        trade_direction=unified_inquiry.get("trade_direction") or "",
+        port_of_loading=unified_inquiry.get("port_of_loading") or "",
+        port_of_destination=unified_inquiry.get("port_of_destination") or "",
+        pickup_address=unified_inquiry.get("pickup_address") or "",
+        drop_off_address=unified_inquiry.get("drop_off_address") or "",
+        goods_description=unified_inquiry.get("goods_description") or "",
+        quantity=quantity,
+        quantity_unit=unified_inquiry.get("quantity_unit") or "",
+        shipment_value=shipment_value,
+        shipment_currency=unified_inquiry.get("shipment_currency") or "",
+        incoterm=unified_inquiry.get("incoterm") or "",
+        dispatch_date=dispatch_date,
+        container_type=unified_inquiry.get("container_type") or "",
+        fcl_container_details=fcl_details,
+        cargo_weight_kg=cargo_weight_kg,
+        cargo_length_cm=cargo_length_cm,
+        cargo_width_cm=cargo_width_cm,
+        cargo_height_cm=cargo_height_cm,
+        cargo_volume_cbm=cargo_volume_cbm,
+        remarks=unified_inquiry.get("remarks") or "",
+        inquiry_complete=inquiry_complete,
+        missing_fields=missing_fields if missing_fields else None,
+        extraction_conflicts=conflicts if conflicts else None,
+    )
+    logger.info(f"[EXIMPLE] Saved to Supabase. Complete: {inquiry_complete}")
+
+    # ── Telegram notification ─────────────────────────────────────────────
+    has_any_data = bool(unified_inquiry.get("company_name") or unified_inquiry.get("goods_description"))
+    if has_any_data:
+        notify.notify_eximple_inquiry(
+            caller_name=caller_name, caller_phone=phone,
+            company_name=unified_inquiry.get("company_name", ""),
+            trade_direction=unified_inquiry.get("trade_direction", ""),
+            port_of_loading=unified_inquiry.get("port_of_loading", ""),
+            port_of_destination=unified_inquiry.get("port_of_destination", ""),
+            goods_description=unified_inquiry.get("goods_description", ""),
+            quantity=str(quantity) if quantity else "",
+            quantity_unit=unified_inquiry.get("quantity_unit", ""),
+            incoterm=unified_inquiry.get("incoterm", ""),
+            dispatch_date=dispatch_date or "",
+            container_type=unified_inquiry.get("container_type", ""),
+            inquiry_complete=inquiry_complete,
+            duration_seconds=duration,
+            services=services,
+            email=unified_inquiry.get("email", ""),
+            remarks=unified_inquiry.get("remarks", ""),
+            shipment_value=str(shipment_value) if shipment_value else "",
+            shipment_currency=unified_inquiry.get("shipment_currency", ""),
+            pickup_address=unified_inquiry.get("pickup_address", ""),
+            drop_off_address=unified_inquiry.get("drop_off_address", ""),
+            license_details=license_details,
+            cargo_weight_kg=str(cargo_weight_kg) if cargo_weight_kg else "",
+            cargo_length_cm=str(cargo_length_cm) if cargo_length_cm else "",
+            cargo_width_cm=str(cargo_width_cm) if cargo_width_cm else "",
+            cargo_height_cm=str(cargo_height_cm) if cargo_height_cm else "",
+            cargo_volume_cbm=str(cargo_volume_cbm) if cargo_volume_cbm else "",
+            fcl_container_details=fcl_details,
+            missing_fields=missing_fields,
+        )
+    else:
+        notify.notify_eximple_call_no_inquiry(
+            caller_name=caller_name, caller_phone=phone,
+            call_summary=extracted_summary or "Caller did not provide inquiry details.",
+            duration_seconds=duration,
+        )
+
+    # ── n8n webhook ───────────────────────────────────────────────────────
+    _n8n_url = os.getenv("N8N_WEBHOOK_URL")
+    if _n8n_url:
+        try:
+            import httpx
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                await client.post(_n8n_url, json={
+                    "event": "call_completed", "agent_type": "eximple",
+                    "phone": phone, "caller_name": caller_name,
+                    "duration": duration, "inquiry_complete": inquiry_complete,
+                    "sentiment": sentiment, "interrupt_count": interrupt_count,
+                })
+        except Exception as e:
+            logger.warning(f"[N8N] Webhook failed: {e}")
 
 
 @app.post("/api/internal/transcript", status_code=202)
@@ -796,9 +1097,10 @@ async def end_web_chat(request: Request):
 
 @app.get("/api/admin/stats")
 async def admin_stats():
-    """Aggregated stats for both agents."""
+    """Aggregated stats for all agents."""
     re_logs = db.fetch_call_logs("real_estate_calls", limit=500)
     doc_logs = db.fetch_call_logs("doctor_calls", limit=500)
+    eximple_logs = db.fetch_call_logs("eximple_calls", limit=500)
 
     def calc(logs: list) -> dict:
         total = len(logs)
@@ -811,14 +1113,20 @@ async def admin_stats():
     return {
         "real_estate": calc(re_logs),
         "doctor": calc(doc_logs),
-        "combined": calc(re_logs + doc_logs),
+        "eximple": calc(eximple_logs),
+        "combined": calc(re_logs + doc_logs + eximple_logs),
     }
 
 
 @app.get("/api/admin/calls")
 async def admin_calls(agent: str = "real_estate", limit: int = 50):
     """Fetch call logs for a specific agent."""
-    table = "real_estate_calls" if agent == "real_estate" else "doctor_calls"
+    table_map = {
+        "real_estate": "real_estate_calls",
+        "doctor": "doctor_calls",
+        "eximple": "eximple_calls",
+    }
+    table = table_map.get(agent, "real_estate_calls")
     return db.fetch_call_logs(table, limit=limit)
 
 
@@ -832,7 +1140,7 @@ def health():
     return {
         "status": "ok",
         "service": "voice-agent-backend",
-        "agents": ["real-estate-agent", "doctor-nehra"],
+        "agents": ["real-estate-agent", "doctor-nehra", "eximple-agent"],
         "web_chat_active": _web_chat_lock["active"],
         "timestamp": datetime.utcnow().isoformat(),
     }

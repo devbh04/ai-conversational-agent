@@ -17,6 +17,12 @@ const AGENTS = [
     icon: "🦷",
     description: "Arjun, AI Receptionist. Books dental appointments with slot awareness.",
   },
+  {
+    id: "eximple-agent",
+    name: "Eximple Trade",
+    icon: "🚢",
+    description: "Arjun, Trade Inquiry Consultant. Collects cross-border shipment inquiries.",
+  },
 ];
 
 export default function Home() {
