@@ -55,6 +55,7 @@ type CallLog = {
   services?: string[];
   license_details?: any;
   missing_fields?: string[];
+  compliance_status?: string;
 };
 
 type CheckItem = { step: string; status: string; message: string };
@@ -408,6 +409,11 @@ function CallTable({
                             <span>Licenses: {typeof call.license_details === 'string' ? call.license_details : JSON.stringify(call.license_details)}</span>
                           )}
                           {agent === "eximple" && call.remarks && <span style={{ width: '100%' }}>Remarks: {call.remarks}</span>}
+                          {agent === "eximple" && call.compliance_status && (
+                            <span style={{ width: '100%', fontWeight: 500, color: call.compliance_status === 'cleared' ? 'var(--success)' : call.compliance_status.startsWith('rejected') ? 'var(--danger)' : 'var(--warning)' }}>
+                              Compliance: {call.compliance_status}
+                            </span>
+                          )}
                           
                           {agent === "eximple" && call.missing_fields && call.missing_fields.length > 0 && (
                             <span className="missing-fields">Missing: {call.missing_fields.join(", ")}</span>
