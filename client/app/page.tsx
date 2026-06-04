@@ -19,7 +19,7 @@ const AGENTS = [
   },
   {
     id: "eximple-agent",
-    name: "Eximple Trade",
+    name: "Trade",
     icon: "🚢",
     description: "Arjun, Trade Inquiry Consultant. Collects cross-border shipment inquiries.",
   },
