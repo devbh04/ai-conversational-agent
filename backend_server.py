@@ -1142,7 +1142,7 @@ def health():
     return {
         "status": "ok",
         "service": "voice-agent-backend",
-        "agents": ["real-estate-agent", "doctor-nehra", "eximple-agent"],
+        "agents": ["real-estate-agent", "doctor-nehra", "eximple-agent", "real-estate-ny-agent"],
         "web_chat_active": _web_chat_lock["active"],
         "timestamp": datetime.utcnow().isoformat(),
     }

@@ -12,6 +12,12 @@ const AGENTS = [
     description: "Arjun, Property Consultant. Handles enquiries and schedules site visits.",
   },
   {
+    id: "real-estate-ny-agent",
+    name: "NY Real Estate",
+    icon: "🗽",
+    description: "David, NY Real Estate Agent. Confident & casual property consultant speaking English, Spanish, German, and French.",
+  },
+  {
     id: "doctor-nehra",
     name: "Dr. Nehra's Clinic",
     icon: "🦷",

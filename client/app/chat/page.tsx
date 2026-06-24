@@ -17,6 +17,7 @@ const MAX_TIME_SECS = 150; // 2:30
 
 const AGENTS = [
   { id: "real-estate-agent", name: "Real Estate", icon: "🏢", desc: "Property enquiries & site visits" },
+  { id: "real-estate-ny-agent", name: "NY Real Estate", icon: "🗽", desc: "David, NY Real Estate Agent (EN/ES/DE/FR)" },
   { id: "doctor-nehra", name: "Dr. Nehra", icon: "🦷", desc: "Dental appointments & availability" },
 ];
 
