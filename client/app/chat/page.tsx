@@ -16,9 +16,10 @@ const MAX_TURNS = 10;
 const MAX_TIME_SECS = 150; // 2:30
 
 const AGENTS = [
-  { id: "real-estate-agent", name: "Real Estate", icon: "🏢", desc: "Property enquiries & site visits" },
-  { id: "real-estate-ny-agent", name: "NY Real Estate", icon: "🗽", desc: "David, NY Real Estate Agent (EN/ES/DE/FR)" },
-  { id: "doctor-nehra", name: "Dr. Nehra", icon: "🦷", desc: "Dental appointments & availability" },
+  { id: "real-estate-agent", name: "Real Estate (IN)", icon: "🏢", desc: "Arjun, Property Consultant. Handles residential/commercial in India." },
+  { id: "real-estate-ny-agent", name: "Real Estate (NY)", icon: "🗽", desc: "David, NY Real Estate Agent. Confident & casual, speaking EN/ES/DE/FR." },
+  { id: "doctor-nehra", name: "Dr. Nehra's Clinic", icon: "🦷", desc: "Arjun, AI Receptionist. Dental bookings & slot availability check." },
+  { id: "eximple-agent", name: "Trade Inquiry", icon: "🚢", desc: "Arjun, Trade Consultant. Collects shipment and customs details." },
 ];
 
 type Stage = "cooldown" | "select" | "chat" | "summary";
@@ -35,10 +36,18 @@ export default function ChatPage() {
   const [summaryData, setSummaryData] = useState<{ call_benefits: string[]; contact_url: string } | null>(null);
   const [starting, setStarting] = useState(false);
 
-  // Check cooldown cookie on mount
+  // Check cooldown cookie and url query agent on mount
   useEffect(() => {
     if (document.cookie.includes("web_chat_used=1")) {
       setStage("cooldown");
+    }
+
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      const agentQuery = params.get("agent");
+      if (agentQuery && AGENTS.some((a) => a.id === agentQuery)) {
+        setSelectedAgent(agentQuery);
+      }
     }
   }, []);
 

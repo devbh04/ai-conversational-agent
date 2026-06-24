@@ -33,18 +33,27 @@ const AGENTS = [
 
 export default function Home() {
   const [selectedAgent, setSelectedAgent] = useState("");
+  const [callingMode, setCallingMode] = useState<"national" | "international">("national");
   const [phone, setPhone] = useState("");
+  const [intlPhone, setIntlPhone] = useState("");
   const [callStatus, setCallStatus] = useState("");
   const [callStatusType, setCallStatusType] = useState<"" | "active" | "error">("");
   const [isCalling, setIsCalling] = useState(false);
 
   async function handleCall() {
-    if (!selectedAgent || phone.length < 10) return;
+    const isIntl = callingMode === "international";
+    const currentPhone = isIntl ? intlPhone : phone;
+    const minLength = isIntl ? 7 : 10;
+
+    if (!selectedAgent || currentPhone.length < minLength) return;
     setIsCalling(true);
     setCallStatus("Dispatching call...");
     setCallStatusType("active");
 
-    const fullPhone = phone.startsWith("+") ? phone : `+91${phone}`;
+    const fullPhone = isIntl 
+      ? (currentPhone.startsWith("+") ? currentPhone : `+${currentPhone}`) 
+      : (currentPhone.startsWith("+") ? currentPhone : `+91${currentPhone}`);
+
     try {
       const res = await fetch(`${BACKEND_URL}/api/dispatch-call`, {
         method: "POST",
@@ -85,22 +94,60 @@ export default function Home() {
         ))}
       </div>
 
+      <div className="calling-mode-tabs">
+        <button
+          className={`tab-btn${callingMode === "national" ? " active" : ""}`}
+          onClick={() => { setCallingMode("national"); setCallStatus(""); }}
+        >
+          🇮🇳 National (India)
+        </button>
+        <button
+          className={`tab-btn${callingMode === "international" ? " active" : ""}`}
+          onClick={() => { setCallingMode("international"); setCallStatus(""); }}
+        >
+          🌐 International
+        </button>
+      </div>
+
       <div className="phone-section">
-        <div className="phone-input-wrapper">
-          <div className="phone-prefix">+91</div>
-          <input
-            className="phone-input"
-            type="tel"
-            placeholder="9876543210"
-            value={phone}
-            onChange={(e) => setPhone(e.target.value.replace(/\D/g, "").slice(0, 10))}
-          />
-        </div>
+        {callingMode === "national" ? (
+          <div className="mode-content">
+            <div className="phone-input-wrapper">
+              <div className="phone-prefix">+91</div>
+              <input
+                className="phone-input"
+                type="tel"
+                placeholder="9876543210"
+                value={phone}
+                onChange={(e) => setPhone(e.target.value.replace(/\D/g, "").slice(0, 10))}
+              />
+            </div>
+            <p className="mode-hint">National India calls are routed through local gateway lines.</p>
+          </div>
+        ) : (
+          <div className="mode-content">
+            <div className="phone-input-wrapper">
+              <div className="phone-prefix">+</div>
+              <input
+                className="phone-input"
+                type="tel"
+                placeholder="14155551234"
+                value={intlPhone}
+                onChange={(e) => setIntlPhone(e.target.value.replace(/\D/g, "").slice(0, 15))}
+              />
+            </div>
+            <p className="mode-hint warning-hint">⚠️ International calls may fail depending on carrier & routing constraints.</p>
+          </div>
+        )}
       </div>
 
       <button
         className={`btn-primary${isCalling ? " calling" : ""}`}
-        disabled={!selectedAgent || phone.length < 10 || isCalling}
+        disabled={
+          !selectedAgent || 
+          isCalling || 
+          (callingMode === "national" ? phone.length < 10 : intlPhone.length < 7)
+        }
         onClick={handleCall}
       >
         {isCalling ? (
@@ -116,9 +163,16 @@ export default function Home() {
         </div>
       )}
 
-      <a href="/chat" className="chat-link">
-        💬 Don&apos;t want to call? Chat with the agent directly
-      </a>
+      <div className="fallback-box">
+        <p className="fallback-text">
+          {callingMode === "international"
+            ? "Avoid international trunk failures. Connect directly using your browser mic:"
+            : "Prefer not to make a phone call? Try the voice agent directly:"}
+        </p>
+        <a href={`/chat?agent=${selectedAgent || ""}`} className="btn-chat-fallback">
+          🎤 Talk to {selectedAgent ? AGENTS.find(a => a.id === selectedAgent)?.name : "Agent"} in Browser
+        </a>
+      </div>
 
       <div className="footer-links">
         <a href="/admin">Admin Dashboard</a>
