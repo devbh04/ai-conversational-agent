@@ -16,6 +16,7 @@ const AGENTS = [
     name: "NY Real Estate",
     icon: "🗽",
     description: "David, NY Real Estate Agent. Confident & casual property consultant speaking English, Spanish, German, and French.",
+    warning: "Try only if you are out of India",
   },
   {
     id: "doctor-nehra",
@@ -91,6 +92,11 @@ export default function Home() {
             <div className="agent-icon">{agent.icon}</div>
             <h3>{agent.name}</h3>
             <p>{agent.description}</p>
+            {agent.warning && (
+              <div className="agent-card-warning">
+                ⚠️ {agent.warning}
+              </div>
+            )}
           </div>
         ))}
       </div>
