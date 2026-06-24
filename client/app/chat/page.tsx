@@ -192,6 +192,7 @@ export default function ChatPage() {
           token={token}
           serverUrl={lkUrl}
           connect={true}
+          audio={true}
           onDisconnected={handleEnd}
         >
           <RoomAudioRenderer />
