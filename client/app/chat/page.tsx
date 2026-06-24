@@ -17,7 +17,7 @@ const MAX_TIME_SECS = 150; // 2:30
 
 const AGENTS = [
   { id: "real-estate-agent", name: "Real Estate (IN)", icon: "🏢", desc: "Arjun, Property Consultant. Handles residential/commercial in India." },
-  { id: "real-estate-ny-agent", name: "Real Estate (NY)", icon: "🗽", desc: "David, NY Real Estate Agent. Confident & casual, speaking EN/ES/DE/FR." },
+  { id: "real-estate-ny-agent", name: "Real Estate (NY)", icon: "🗽", desc: "David, NY Real Estate Agent. Confident & casual, speaking EN/ES/DE/FR.", warning: "Try only if you are out of India" },
   { id: "doctor-nehra", name: "Dr. Nehra's Clinic", icon: "🦷", desc: "Arjun, AI Receptionist. Dental bookings & slot availability check." },
   { id: "eximple-agent", name: "Trade Inquiry", icon: "🚢", desc: "Arjun, Trade Consultant. Collects shipment and customs details." },
 ];
@@ -36,12 +36,8 @@ export default function ChatPage() {
   const [summaryData, setSummaryData] = useState<{ call_benefits: string[]; contact_url: string } | null>(null);
   const [starting, setStarting] = useState(false);
 
-  // Check cooldown cookie and url query agent on mount
+  // Check url query agent on mount
   useEffect(() => {
-    if (document.cookie.includes("web_chat_used=1")) {
-      setStage("cooldown");
-    }
-
     if (typeof window !== "undefined") {
       const params = new URLSearchParams(window.location.search);
       const agentQuery = params.get("agent");
@@ -131,32 +127,10 @@ export default function ChatPage() {
       });
     }
 
-    // Set 3-day cooldown cookie
-    document.cookie = "web_chat_used=1; path=/; max-age=259200; SameSite=Lax";
     setStage("summary");
   }, [roomName]);
 
   // ── Render ─────────────────────────────────────────────────────────────
-
-  // Cooldown
-  if (stage === "cooldown") {
-    return (
-      <div className="chat-container">
-        <div className="cooldown-screen">
-          <div className="icon">🎤</div>
-          <h2>Demo Already Used</h2>
-          <p>
-            You&apos;ve already tried the voice demo. For an extended
-            demo or to learn more, reach out to us.
-          </p>
-          <a href="https://devbhangale.vercel.app" className="btn-contact">
-            Contact for More →
-          </a>
-          <a href="/" style={{ fontSize: "0.8rem", marginTop: "0.5rem" }}>← Back to Home</a>
-        </div>
-      </div>
-    );
-  }
 
   // Summary
   if (stage === "summary") {
@@ -213,7 +187,7 @@ export default function ChatPage() {
       <p className="page-subtitle">Talk to our AI agent directly from your browser</p>
 
       <div className="demo-banner">
-        ⏱️ Demo: {MAX_TURNS} messages max · {Math.floor(MAX_TIME_SECS / 60)}:{(MAX_TIME_SECS % 60).toString().padStart(2, "0")} time limit · 1 session every 3 days
+        ⏱️ Demo: {MAX_TURNS} messages max · {Math.floor(MAX_TIME_SECS / 60)}:{(MAX_TIME_SECS % 60).toString().padStart(2, "0")} time limit
       </div>
 
       {availability === "busy" && (
@@ -233,6 +207,11 @@ export default function ChatPage() {
             <div className="agent-icon">{agent.icon}</div>
             <h3>{agent.name}</h3>
             <p>{agent.desc}</p>
+            {agent.warning && (
+              <div className="agent-card-warning">
+                ⚠️ {agent.warning}
+              </div>
+            )}
           </div>
         ))}
       </div>

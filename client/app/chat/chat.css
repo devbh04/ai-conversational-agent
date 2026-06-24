@@ -777,3 +777,22 @@ body:has(.chat-container) {
     padding: 0.9rem;
   }
 }
+
+.agent-card-warning {
+  display: inline-block;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: #f59e0b;
+  background: rgba(245, 158, 11, 0.1);
+  padding: 0.25rem 0.5rem;
+  border-radius: 6px;
+  margin-top: 0.5rem;
+  border: 1px solid rgba(245, 158, 11, 0.2);
+  align-self: flex-start;
+  animation: pulse-amber 2s infinite alternate;
+}
+
+@keyframes pulse-amber {
+  0% { border-color: rgba(245, 158, 11, 0.2); box-shadow: 0 0 0 0 rgba(245, 158, 11, 0); }
+  100% { border-color: rgba(245, 158, 11, 0.4); box-shadow: 0 0 8px rgba(245, 158, 11, 0.1); }
+}
